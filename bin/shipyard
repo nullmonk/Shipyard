@@ -1,0 +1,116 @@
+#!/usr/bin/env python3
+
+import os
+import sys
+import fire
+
+from shipyard.patches import Patches
+from shipyard.patch import Patch
+from shipyard.generator import new_project
+
+class cli:
+    def __init__(self, directory=".", source_directory="sources"):
+        """Maintain a group of patches against a source repository"""
+        self.dir = directory
+        self.sdir = source_directory
+    
+    def _load(self) -> Patches:
+        path = os.path.join(self.dir, "shipfile.py")
+        if os.path.exists(path):
+            # Detected a shipyard file in the current dir, assume this is the patch folder
+            p = Patches(self.dir, source_directory=self.sdir)
+            return p
+            #except Exception as e:
+                #print(f"[!] Detected a shipyard.py file. But there were errors loading it: {e}", file=sys.stderr)
+                #exit(127)
+        print("[!] This directory does not appear to be a Shipyard directory. Try passing a directory with '--directory' or setting it up in the current directory", file=sys.stderr)
+        print(f"{sys.argv[0]} init <url>", file=sys.stderr)
+        exit(127)
+
+    def init(self, url, name=""):
+        """Initialize a new Shipyard project directory for the given url
+
+        url: URL to a git repository with the source code
+        name: override the name of the project (default repository name)
+        """
+        try:
+            new_project(self.dir, url, name)
+            self._load()
+        except Exception as e:
+            print(e, file=sys.stderr)
+            exit(127)
+
+    def versions(self):
+        """List the versions of the source code. Denoting which versions have patches"""
+        p = self._load()
+        print(f"versions of {p.infoObject.Name}")
+        for v in p.source.versions():
+            if v in p.versions:
+                print(f"{v} - {len(p.versions[v])} patches")
+            else:
+                print(v)
+
+    def import_patch(self, name, description=""):
+        """import a new patchfile
+        
+        This patch can later be applied to multiple versions of the source
+        
+        Example: git diff file.c | shipyard import mypatch "this is an awesome patchfile" """
+        buf = sys.stdin.read()
+        buf = buf.strip()
+        if not buf:
+            print("[*] Empty contents. Exiting")
+            return
+        
+
+        # Import it into scratch by default
+        _, ext = os.path.splitext(name)
+        if not ext:
+            name += ".patch"
+        pth = os.path.join(self.dir, "scratch")
+        os.makedirs(pth, exist_ok=True)
+        pth = os.path.join(pth, name)
+        p = Patch(filename=pth, contents=buf)
+        if description:
+            p.Description = description
+        with open(pth, "w") as of:
+            of.write(p.dump())
+        print("[+] Saved new patch file to", pth)
+    
+    def test_patch(self, patchfile):
+        """Test a patch file against all versions"""
+        p = self._load()
+        try:
+            patch = Patch.from_file(patchfile)
+        except Exception as e:
+            print("[!] Could not load patchfile:", e, file=sys.stderr)
+            exit(127)
+        try:
+            p.test_patch(patch)
+        except Exception as e:
+            print("[!] Checkout branch:", e, file=sys.stderr)
+            exit(127)
+    
+    def build_version(self, version):
+        """Build a patch for a new version. This will use all existing patch files to try and create a version"""
+        p = self._load()
+        p.patch_version(version)
+
+    def export(self, version):
+        """Export the version into a single patchfile"""
+        p = self._load()
+        p.source.checkout(version)
+        res = f"{p.infoObject.Name} {version}\n"
+        p.source.reset()
+        for patch in p.versions[version]:
+            p.source.apply(patch)
+
+        res += p.source.refresh()
+        print(res)
+
+def main():
+    #p = Patch.from_file(sys.argv[1])
+    #print(p.dump())
+    fire.Fire(cli)
+
+main()
