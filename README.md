@@ -1,4 +1,5 @@
-# Shipyard
+<img src="logo.png" alt="Shipyard" width="400"/>  
+
 _quilt on steriods_  
 
 
