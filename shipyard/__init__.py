@@ -1,1 +1,1 @@
-from .custompatch import CodePatch
+from .custompatch import CodePatch, Modifyable

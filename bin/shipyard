@@ -118,18 +118,28 @@ class cli:
         print(res)
     
     def list_source_files(self):
+        """List all files of the source that are not in the gitignore"""
         p = self._load()
         p.get_file_list()
         for f in p._files:
             print(f)
     
     def apply_code_patches(self, patches=[]):
+        """Apply all the code patches to the current source"""
         p = self._load()
         p.get_file_list()
         try:
             p.apply_code_patches(patches=patches)
         except Exception as e:
             print("[!]", e)
+
+    def checkout(self, version=""):
+        """Checkout the given version of the source. If not version is given it will reset the
+        source back to the original state of the current version"""
+        p = self._load()
+        p.source.reset()
+        if version:
+            p.source.checkout(version)
 
 def main():
     #p = Patch.from_file(sys.argv[1])

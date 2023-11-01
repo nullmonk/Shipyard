@@ -89,6 +89,8 @@ The more versions that work, the less hassle maintence is down the road...
 We will need to cleanup the source repo before moving on so we can either stash or reset our changes
 
 ```bash
+shipyard checkout
+# OR
 cd source/coreutils
 git stash 
 # OR
@@ -103,8 +105,8 @@ shipyard test_patch ../patches/scratch/always_root.patch
 `always_root.patch` fails on most versions of the tool, we can manually check versions to see why it fails:
 
 ```bash
+shipyard checkout v8.4
 cd source/coreutils
-git checkout tags/v8.4
 git apply -v --reject ../patches/scratch/always_root.patch
 # Make your changes here
 ```
@@ -135,6 +137,28 @@ class Shipfile:
 `CodePatches` can be tested like any other patch:
 ```bash
 shipyard test_patch animal_converter
+```
+
+Because certain functions are common when patching files, a shorthand object has been provided to apply common changes:
+```python
+from shipfile import CodePatch, Modifyable
+
+class Shipfile:
+    ...
+    @CodePatch(r".*\.py")
+    def animal_converter(file: str):
+        with Modifyable(file) as f:
+            f.replace('"cat"', '"dog"', err="Hunk #1 failed: cannot find '{k}'")
+            f.reinsert(
+                r"def main\(.*\):", # the string to match on
+                [
+                    "\tif sys.argv[0] == 'shipyard':",
+                    "\t\traise ValueError('shipyard sucks')
+                ], # Lines to insert into the code
+                before=False # Insert the line AFTER the regex,
+                err="Cannot find main with re: {regex}"
+            )
+        # File has been saved with the new code here
 ```
 
 ### Creating new version release
