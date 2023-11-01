@@ -61,7 +61,7 @@ def new_project(directory, url, name=""):
     with open(os.path.join(directory, "shipfile.py"), "w") as of:
         of.write(template.format(url=url, name=name))
     with open(os.path.join(directory, ".gitignore"), "w") as of:
-        of.write("sources/*")
+        of.write("sources/*\n*.pyc\n")
     with open(os.path.join(directory, "patches", ".gitkeep"), "w") as of:
         of.write("Patches go here")
     
