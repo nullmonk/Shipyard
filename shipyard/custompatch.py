@@ -55,13 +55,13 @@ class Modifyable:
             return False
         if count <= 0:
             count = -1 # Count must be 0 for re and -1 for string
-        self.contents = self.contents.replace(k, v, count=count)
+        self.contents = self.contents.replace(k, v, count)
         return True
 
     def replace_all(self, replacements: dict, err="", count=0):
         """replace all strings in _replacements_ with the value. if err is defined, each string must be replaced or an error will be thrown"""
         for k, v in replacements.items():
-            self.contents = self.replace(k, v, err=err, count=count)
+            self.replace(k, v, err=err, count=count)
     
     def reinsert(self, regex, lines=[], before=False, err=""):
         """Insert lines before or after the given regular expression"""
