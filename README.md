@@ -20,7 +20,7 @@ pip install .
 
 ## Usage
 
-#### Creating a new source
+### Creating a new source
 A source is simply a folder with a series of patches and a python file defining some metadata and helpers. Each source is associated with
 a git repository of source code that needs patched. To create a new source run the following command:
 
@@ -55,7 +55,7 @@ We can test our version filtering by running the following command:
 shipyard versions
 ```
 
-#### Creating a new patch
+### Creating a new patch
 
 We will now create a patch. Edit a file in `../sources/coreutils`.
 
@@ -95,6 +95,11 @@ git stash
 git reset --hard && git clean -fdx
 ```
 
+Check test the patch on all versions:
+```bash
+shipyard test_patch ../patches/scratch/always_root.patch
+```
+
 `always_root.patch` fails on most versions of the tool, we can manually check versions to see why it fails:
 
 ```bash
@@ -104,7 +109,35 @@ git apply -v --reject ../patches/scratch/always_root.patch
 # Make your changes here
 ```
 
-#### Creating new version release
+### CodePatches
+Patches _suck_ to get right, a basic change in the code can ruin an entire patchfile. To combat this, Shipyard introduces `CodePatches`. CodePatches are simple functions that apply to a file to make changes.
+
+We can define `CodePatches` in our `shipfile.py` very easily:
+
+```python
+from shipfile import CodePatch
+
+class Shipfile:
+    ...
+    @CodePatch(r".*\.c", r".*\.h") # This patch will apply to ALL .c and .h files
+    def animal_converter(file: str):
+        """Change all cats to dogs"""
+        with open(file) as f:
+            contents = f.read()
+        contents = contents.replace('"cats"', '"dogs"')
+        with open(file, "w") as f:
+            f.write(contents)
+        # Any Exceptions raised will cause the patch to fail
+        if '"ape"' in contents:
+            raise ValueError("animal_converter does not support 'apes'")
+```
+
+`CodePatches` can be tested like any other patch:
+```bash
+shipyard test_patch animal_converter
+```
+
+### Creating new version release
 
 When your patches are all compatible with a version, you may build that version. This will create new patches in the version directory
 
@@ -116,6 +149,8 @@ You may then export the patches to a single patchfile for use later
 ```
 shipyard export v9.4
 ```
+
+CodePatches will be included in the release patch
 
 ## Design Choices
 Multiple different design elements were taken into consideration for this tool. These limitations quickly render

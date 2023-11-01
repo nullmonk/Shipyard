@@ -4,8 +4,6 @@ import inspect
 
 from os import path
 
-from shipyard.patch import Patch
-
 def _load_object(fil):
     """
     Load the class object in the .py file associated with the software.

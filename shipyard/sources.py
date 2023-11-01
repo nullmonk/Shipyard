@@ -4,7 +4,7 @@
 import os
 import inspect
 from dataclasses import dataclass
-from shipyard.patch import Patch
+from shipyard.patch import PatchFile
 
 @dataclass
 class SourceProgram:
@@ -38,7 +38,9 @@ class SourceProgram:
     
     def resolve_source_directory(self) -> str:
         if self.source_directory:
-            return self.source_directory()
+            if callable(self.source_directory):
+                return self.source_directory()
+            return self.source_directory
         
         f, _ = os.path.split(self._filepath)
         f = os.path.join(f, "sources", self.Name)
@@ -65,11 +67,11 @@ class SourceManager:
         """Use a specific version"""
         raise NotImplementedError()
 
-    def refresh(self, p: Patch, directory: str):
+    def refresh(self, p: PatchFile, directory: str):
         """refresh a patch"""
         raise NotImplementedError()
 
-    def apply(self, patch: Patch):
+    def apply(self, patch: PatchFile):
         """Apply a patch to the current source"""
         raise NotImplementedError()
     

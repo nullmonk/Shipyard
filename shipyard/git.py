@@ -9,7 +9,7 @@ from dataclasses import dataclass
 
 from shipyard.utils import getMajor
 from shipyard.sources import SourceManager, SourceProgram
-from shipyard.patch import Patch
+from shipyard.patch import PatchFile
 
 class GitMgr(SourceManager):
     def __init__(self, repo: SourceProgram, destination=".") -> None:
@@ -39,6 +39,8 @@ class GitMgr(SourceManager):
             version = self.r.tag_to_version(tag)
             if version and not self.r.is_version_ignored(version):
                 versions.append(version)
+        if not versions:
+            versions = ["HEAD"]
         return sorted(versions)
 
     def checkout(self, version) -> None:
@@ -57,7 +59,7 @@ class GitMgr(SourceManager):
         if res.returncode != 0:
             raise ValueError(res.stderr)
 
-    def apply(self, patch: Patch, reject=False, check=False):
+    def apply(self, patch: PatchFile, reject=False, check=False):
         rel = os.path.relpath(patch.Filename, self.r.Directory)
         args = ["git", "apply","-v", "--recount", rel]
         if reject:
@@ -76,7 +78,7 @@ class GitMgr(SourceManager):
             raise ValueError(res.stderr)
         return True
         
-    def refresh(self, patch: Patch = None):
+    def refresh(self, patch: PatchFile = None):
         """Refresh a patch file and save it to outdir"""
         args = ["git", "--no-pager", "diff", ]
         if patch:

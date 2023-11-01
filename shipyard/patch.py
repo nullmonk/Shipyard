@@ -2,7 +2,7 @@ from os import path
 from dataclasses import dataclass
 
 @dataclass
-class Patch:
+class PatchFile:
     def __init__(self, contents="", filename=""):
         self.Name = ""
         self.Description = ""
@@ -65,7 +65,7 @@ class Patch:
         return hash(self.Name)
     
     def __eq__(self, other):
-        if not isinstance(other, Patch):
+        if not isinstance(other, PatchFile):
             return False
         if self.Name == other.Name:
             return True

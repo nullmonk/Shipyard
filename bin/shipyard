@@ -5,7 +5,7 @@ import sys
 import fire
 
 from shipyard.patches import Patches
-from shipyard.patch import Patch
+from shipyard.patch import PatchFile
 from shipyard.generator import new_project
 
 class cli:
@@ -70,7 +70,7 @@ class cli:
         pth = os.path.join(self.dir, "scratch")
         os.makedirs(pth, exist_ok=True)
         pth = os.path.join(pth, name)
-        p = Patch(filename=pth, contents=buf)
+        p = PatchFile(filename=pth, contents=buf)
         if description:
             p.Description = description
         with open(pth, "w") as of:
@@ -80,11 +80,13 @@ class cli:
     def test_patch(self, patchfile):
         """Test a patch file against all versions"""
         p = self._load()
-        try:
-            patch = Patch.from_file(patchfile)
-        except Exception as e:
-            print("[!] Could not load patchfile:", e, file=sys.stderr)
-            exit(127)
+        patch = patchfile
+        if not patchfile in p.code_patches:
+            try:
+                patch = PatchFile.from_file(patchfile)
+            except Exception as e:
+                print("[!] Could not load patchfile or CodePatch:", e, file=sys.stderr)
+                exit(127)
         try:
             p.test_patch(patch)
         except Exception as e:
@@ -105,8 +107,29 @@ class cli:
         for patch in p.versions[version]:
             p.source.apply(patch)
 
+        # Apply all the code patches
+        try:
+            p.apply_code_patches()
+        except Exception as e:
+            print("[!]", e)
+            quit(1)
+        
         res += p.source.refresh()
         print(res)
+    
+    def list_source_files(self):
+        p = self._load()
+        p.get_file_list()
+        for f in p._files:
+            print(f)
+    
+    def apply_code_patches(self, patches=[]):
+        p = self._load()
+        p.get_file_list()
+        try:
+            p.apply_code_patches(patches=patches)
+        except Exception as e:
+            print("[!]", e)
 
 def main():
     #p = Patch.from_file(sys.argv[1])
