@@ -101,13 +101,18 @@ class cli:
     def export(self, version):
         """Export the version into a single patchfile"""
         p = self._load()
-        p.source.checkout(version)
+        vers = p.source.versions()
+        if len(vers) > 1:
+            p.source.checkout(version)
+        else:
+            version = vers[0]
         res = f"{p.infoObject.Name} {version}\n"
         p.source.reset()
-        for patch in p.versions[version]:
+        for patch in p.versions.get(version, []):
             p.source.apply(patch)
 
         # Apply all the code patches
+        p.get_file_list()
         try:
             p.apply_code_patches()
         except Exception as e:
@@ -129,7 +134,8 @@ class cli:
         p = self._load()
         p.get_file_list()
         try:
-            p.apply_code_patches(patches=patches)
+            for cf in p.apply_code_patches():
+                print(f"[+] applied {cf.__name__}")
         except Exception as e:
             print("[!]", e)
 

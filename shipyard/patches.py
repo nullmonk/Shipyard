@@ -167,10 +167,14 @@ class Patches:
                     print(f"[!] FAIL {v}: {e}")
     
     def apply_code_patches(self, patches=[]):
+        cfs = set()
         for f in self._files:
-            self.__run_patches_on_file(f, patches=patches)
-    
-    def __run_patches_on_file(self, file, patches=[]):
+            cf = self.__run_patches_on_file(f, patches=patches)
+            if cf:
+                cfs.update(cf)
+        return cfs
+
+    def __run_patches_on_file(self, file, patches=[]) -> set():
         """Run all eligable (within an optional subset) CodePatches on the given file"""
         can_run_on = set()
         r: re.Pattern
@@ -185,7 +189,7 @@ class Patches:
                 f(file)
             except Exception as e:
                 raise ValueError(f"shipfile.{f.__name__} failed on {file}: {e}")
-        return
+        return can_run_on
 
     def validate_version(self, version: str):
         """Validate that a version is compatible with all the patches we have for it"""

@@ -70,6 +70,8 @@ class Modifyable:
             lines = [lines]
         if not res:
             if err:
+                if not isinstance(err, str):
+                    err = "cannot find regex '{regex}"
                 raise ValueError(err.format(regex=regex))
             return False
         
@@ -79,7 +81,7 @@ class Modifyable:
             idx = res.start()
         
         f.write(self.contents[:idx])
-        f.write("\n".join(lines))
+        f.write("\n".join(lines)+"\n")
         f.write(self.contents[idx:])
 
         self.contents = f.getvalue()

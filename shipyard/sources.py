@@ -24,8 +24,8 @@ class SourceProgram:
     IgnoredVersions = []
 
     """If the version string is different than the git tag, do the conversions here"""
-    version_to_tag = lambda s:s
-    tag_to_version = lambda s:s
+    version_to_tag = lambda _, s:s
+    tag_to_version = lambda _, s:s
     is_version_ignored = lambda _: False
     _default_attributes = ("source_directory", "tag_to_version", "version_to_tag", "is_version_ignored", "VersionTags", "MinMajorVersion", "IgnoredVersions", "Directory", "Patches")
     
