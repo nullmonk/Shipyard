@@ -176,6 +176,11 @@ shipyard export v9.4
 
 CodePatches will be included in the release patch
 
+## Examples
+Not many examples of repositories managed with Shipyard are open source, but [free-da](https://github.com/micahjmartin/free-da) is one that makes exclusive use of
+CodePatches to maintain source code
+
+
 ## Design Choices
 Multiple different design elements were taken into consideration for this tool. These limitations quickly render
 tools like `diff`, `patch`, and `quilt` difficult to use
