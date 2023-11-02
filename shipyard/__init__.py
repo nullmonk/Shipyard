@@ -1,1 +1,2 @@
-from .custompatch import CodePatch, Modifyable
+from .codepatch import CodePatch
+from .ez import EZ

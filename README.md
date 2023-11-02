@@ -141,13 +141,13 @@ shipyard test_patch animal_converter
 
 Because certain functions are common when patching files, a shorthand object has been provided to apply common changes:
 ```python
-from shipfile import CodePatch, Modifyable
+from shipfile import CodePatch, EZ
 
 class Shipfile:
     ...
     @CodePatch(r".*\.py")
     def animal_converter(file: str):
-        with Modifyable(file) as f:
+        with EZ(file) as f:
             f.replace('"cat"', '"dog"', err="Hunk #1 failed: cannot find '{k}'")
             f.reinsert(
                 r"def main\(.*\):", # the string to match on
