@@ -45,6 +45,10 @@ class cli:
         p = self._load()
         print(f"versions of {p.infoObject.Name}")
         for v in p.source.versions():
+            # Print tag aswell as version
+            t = p.infoObject.version_to_tag(v)
+            if t != v:
+                v = f"{v} - tags/{t}"
             if v in p.versions:
                 print(f"{v} - {len(p.versions[v])} patches")
             else:

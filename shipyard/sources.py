@@ -20,19 +20,19 @@ class SourceProgram:
     Patches = "patches/"
     # Test using git tag -l 'PATTERN'
     VersionTags = "*" # A pattern to match for release version tags in the source
-    MinMajorVersion = 0 # Last major version we care about
+    Variables = {}
     IgnoredVersions = []
 
     """If the version string is different than the git tag, do the conversions here"""
     version_to_tag = lambda _, s:s
     tag_to_version = lambda _, s:s
     is_version_ignored = lambda _: False
-    _default_attributes = ("source_directory", "tag_to_version", "version_to_tag", "is_version_ignored", "VersionTags", "MinMajorVersion", "IgnoredVersions", "Directory", "Patches")
+    _default_attributes = ("source_directory", "tag_to_version", "version_to_tag", "is_version_ignored", "VersionTags", "Patches", "Variables")
     
     def __init__(self, name, url) -> None:
         self.source_directory = None
-        self.Name = name
-        self.Directory = self.Name
+        self.Name = name # unused
+        self.Directory = self.Name # internal only
         self.Url = url
         self._filepath = ""
     

@@ -31,6 +31,12 @@ class Patches:
         """Where patches reside"""
         return path.join(*[i for i in (self._dir, self.infoObject.Patches, *others) if i and i != "."])
 
+    def _checkout(self, version):
+        """Checkout a version"""
+        self.source.reset()
+        self.source.checkout(version)
+        self._ver = version
+
     def _load_code_patch(self, cp):
         """Load the regexs for a single CodePatch"""
         self.code_patches[cp.__name__] = cp
@@ -60,6 +66,7 @@ class Patches:
                 if not p.endswith(".diff") and not p.endswith(".patch"):
                     continue
                 patch = PatchFile.from_file(path.join(root, p))
+                patch.update(self.infoObject.Variables)
                 self.patches[patch.Name] = patch
                 self.versions[version].add(patch)
             if not self.versions[version]:
@@ -71,6 +78,7 @@ class Patches:
         https://stackoverflow.com/questions/70745060/how-to-list-directory-files-excluding-files-in-gitignore
         https://stackoverflow.com/a/19859907
         """
+        self._files = []
         ignored = [".git"]
         if path.isfile(".gitignore"):
             with open(".gitignore") as f:
@@ -120,8 +128,7 @@ class Patches:
         closestVers = getClosestVersions(version, list(self.versions.keys()))
         patches = self.versions.get(closestVers[0])
         print(f"[*] Attempting to patch {version} with {len(patches)} patches from version {closestVers[0]}")
-        self.source.checkout(version)
-        self.source.reset()
+        self._checkout(version)
         outdir = self._patch_dir(version)
         makedirs(outdir, exist_ok=True)
         for p in patches:
@@ -150,8 +157,7 @@ class Patches:
         versions = self.source.versions()
         for v in versions:
             if len(versions) > 1:
-                self.source.reset()
-                self.source.checkout(v)
+                self._checkout(v)
             if not is_code_patch:
                 if self.source.apply(patch, check=True):
                     print("[+] PASS", v)
@@ -172,6 +178,10 @@ class Patches:
             cf = self.__run_patches_on_file(f, patches=patches)
             if cf:
                 cfs.update(cf)
+        for cf in self.code_patches.values():
+            if not getattr(cf, "__patch_has_run", False) and getattr(cf, "__patch_required", True):
+                # This patch failed to run! error bc its required
+                raise AssertionError(f"Code patch {cf.name} did not run and is required")
         return cfs
 
     def __run_patches_on_file(self, file, patches=[]) -> set():
@@ -183,10 +193,20 @@ class Patches:
                 for f in funcs:
                     if patches and f.__name__ not in patches:
                         continue # This patch is not in the given subset, skip it
+                    vers = getattr(f, "__patch_versions", [])
+                    if vers and self._ver not in vers:
+                        # This patch does not apply to this version. Mark it as run though so we dont error
+                        setattr(f, "__patch_has_run", True)
+                        continue
                     can_run_on.add(f)
         for f in can_run_on:
             try:
-                f(file)
+                # Some CodePatches may take a version string. If this is the case, pass the version
+                spec = inspect.getfullargspec(f)
+                if len(spec.args) > 1:
+                    f(file, self._ver)
+                else:
+                    f(file) # Dont pass the version to this one
             except Exception as e:
                 raise ValueError(f"shipfile.{f.__name__} failed on {file}: {e}")
         return can_run_on
@@ -195,7 +215,7 @@ class Patches:
         """Validate that a version is compatible with all the patches we have for it"""
         if version not in self.versions:
             raise ValueError("No patches found for version " + version)
-        self.source.checkout(version)
+        self._checkout(version)
         try:
             for p in self.versions[version]:
                 self.source.apply(p)

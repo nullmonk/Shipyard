@@ -60,8 +60,8 @@ class GitMgr(SourceManager):
             raise ValueError(res.stderr)
 
     def apply(self, patch: PatchFile, reject=False, check=False):
-        rel = os.path.relpath(patch.Filename, self.r.Directory)
-        args = ["git", "apply","-v", "--recount", rel]
+        #rel = os.path.relpath(patch.Filename, self.r.Directory)
+        args = ["git", "apply","-v", "--recount"]
         if reject:
             args.insert(2, "--reject")
         if check:
@@ -70,6 +70,7 @@ class GitMgr(SourceManager):
             args,
             capture_output=True,
             cwd=self.r.Directory,
+            input=patch.dump(),
             encoding="utf-8"
         )
         if res.returncode != 0:
@@ -77,7 +78,7 @@ class GitMgr(SourceManager):
                 return False
             raise ValueError(res.stderr)
         return True
-        
+    
     def refresh(self, patch: PatchFile = None):
         """Refresh a patch file and save it to outdir"""
         args = ["git", "--no-pager", "diff", ]
