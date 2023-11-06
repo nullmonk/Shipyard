@@ -38,6 +38,8 @@ def getClosestVersions(version: str, versions: list[str]) -> str:
             nxt = vs[r]
             if nxt != version: newVersions.append(nxt)
             r+=1
+    if not newVersions:
+        return [version]
     return newVersions
 
 

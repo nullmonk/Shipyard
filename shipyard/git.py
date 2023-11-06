@@ -59,7 +59,7 @@ class GitMgr(SourceManager):
         if res.returncode != 0:
             raise ValueError(res.stderr)
 
-    def apply(self, patch: PatchFile, reject=False, check=False):
+    def apply(self, patch: PatchFile, reject=True, check=False):
         #rel = os.path.relpath(patch.Filename, self.r.Directory)
         args = ["git", "apply","-v", "--recount"]
         if reject:

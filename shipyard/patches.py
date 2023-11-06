@@ -20,12 +20,11 @@ class Patches:
         self.code_patches = {} # Patches that are functions and not .patch files
         self.code_res = defaultdict(list) # when a file matches an RE in this array, goto the func it points to
         self.versions = {}
-        self.infoObject = None
+        self.infoObject: SourceProgram = None
         self._ver = None
         self._files = [] # List of all files in the source
         self.load()
         # If we wanted, we could use a different source manager here
-        print("SHIPYARD:", self._dir, self.infoObject)
         self.source:SourceManager = GitMgr(self.infoObject)
 
     def _checkout(self, version):
@@ -109,7 +108,7 @@ class Patches:
                 self.source.apply(p)
                 contents = self.source.refresh(p)
                 _, fname = path.split(p.Filename)
-                out = self._patch_dir(v, fname)
+                out = path.join(self.infoObject.Patches, v, fname)
                 with open(path.join(out), "w") as f:
                     f.write(contents)
                 print(f"[+] Applied {p.Name} from {v}")
@@ -118,6 +117,7 @@ class Patches:
                 print(E)
                 continue
         # Could not find a similar patch
+        self.source.reset()
         return False
 
     def patch_version(self, version):
@@ -128,10 +128,12 @@ class Patches:
         
         # Will return empty list if we dont have any other version patches
         closestVers = getClosestVersions(version, list(self.versions.keys()))
+        if version in self.versions:
+            closestVers = [version] + closestVers
         patches = self.versions.get(closestVers[0]) # Get 
         print(f"[*] Attempting to patch {version} with {len(patches)} patches from version {closestVers[0]}")
         self._checkout(version)
-        outdir = self._patch_dir(version)
+        outdir = path.join(self.infoObject.Patches, version)
         makedirs(outdir, exist_ok=True)
         for p in patches:
             try:
@@ -146,12 +148,12 @@ class Patches:
                         f.write(contents)
             except Exception as e:
                 print(e)
+                continue
                 self.source.reset()
                 # Fall back to trying every similar patch
                 if not self.apply_similar_patch(p, closestVers, outdir):
                     print("[!] Failed to find a valid patch for", p.Name)
         print("[+] Saved patches to", outdir)
-        self.source.reset()
 
     def test_patch(self, patch: PatchFile):
         """Test a patchfile on all versions of a source code"""
