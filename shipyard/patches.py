@@ -14,22 +14,19 @@ from shipyard.git import SourceProgram, SourceManager, GitMgr
 class Patches:
     """A manager for the patches that loops through a directory to figure out
     each version supported and that patches that we have for each one"""
-    def __init__(self, directory, source_directory=""):
+    def __init__(self, directory="."):
         self._dir = directory
         self.patches = {}
         self.code_patches = {} # Patches that are functions and not .patch files
         self.code_res = defaultdict(list) # when a file matches an RE in this array, goto the func it points to
         self.versions = {}
         self.infoObject = None
-
+        self._ver = None
         self._files = [] # List of all files in the source
         self.load()
         # If we wanted, we could use a different source manager here
-        self.source:SourceManager = GitMgr(self.infoObject, destination=source_directory)
-
-    def _patch_dir(self, *others):
-        """Where patches reside"""
-        return path.join(*[i for i in (self._dir, self.infoObject.Patches, *others) if i and i != "."])
+        print("SHIPYARD:", self._dir, self.infoObject)
+        self.source:SourceManager = GitMgr(self.infoObject)
 
     def _checkout(self, version):
         """Checkout a version"""
@@ -66,7 +63,7 @@ class Patches:
                 if not p.endswith(".diff") and not p.endswith(".patch"):
                     continue
                 patch = PatchFile.from_file(path.join(root, p))
-                patch.update(self.infoObject.Variables)
+                #patch.update(self.infoObject.Variables)
                 self.patches[patch.Name] = patch
                 self.versions[version].add(patch)
             if not self.versions[version]:
@@ -125,8 +122,13 @@ class Patches:
 
     def patch_version(self, version):
         """Patch a version with all the patches from a previous version"""
+        actualVers = self.source.versions()
+        if version not in actualVers:
+            raise ValueError(f"Invalid version '{version}'")
+        
+        # Will return empty list if we dont have any other version patches
         closestVers = getClosestVersions(version, list(self.versions.keys()))
-        patches = self.versions.get(closestVers[0])
+        patches = self.versions.get(closestVers[0]) # Get 
         print(f"[*] Attempting to patch {version} with {len(patches)} patches from version {closestVers[0]}")
         self._checkout(version)
         outdir = self._patch_dir(version)
@@ -136,8 +138,12 @@ class Patches:
                 self.source.apply(p)
                 contents = self.source.refresh(p)
                 _, fname = path.split(p.Filename)
-                with open(path.join(outdir, fname), "w") as f:
-                    f.write(contents)
+                output = path.join(outdir, fname)
+                if path.exists(output):
+                    print(f"[!] Refusing to overwrite existing file '{output}'")
+                else:
+                    with open(output, "w") as f:
+                        f.write(contents)
             except Exception as e:
                 print(e)
                 self.source.reset()
@@ -178,11 +184,14 @@ class Patches:
             cf = self.__run_patches_on_file(f, patches=patches)
             if cf:
                 cfs.update(cf)
+        return cfs
+
+    def _check_codepatches(self):
+        """Ensure that all required codepatches have run"""
         for cf in self.code_patches.values():
             if not getattr(cf, "__patch_has_run", False) and getattr(cf, "__patch_required", True):
                 # This patch failed to run! error bc its required
-                raise AssertionError(f"Code patch {cf.name} did not run and is required")
-        return cfs
+                raise AssertionError(f"Code patch {cf.__name__} did not run and is required")
 
     def __run_patches_on_file(self, file, patches=[]) -> set():
         """Run all eligable (within an optional subset) CodePatches on the given file"""
@@ -203,6 +212,8 @@ class Patches:
             try:
                 # Some CodePatches may take a version string. If this is the case, pass the version
                 spec = inspect.getfullargspec(f)
+                setattr(f, "__patch_has_run", True)
+
                 if len(spec.args) > 1:
                     f(file, self._ver)
                 else:
@@ -224,6 +235,35 @@ class Patches:
             self.source.reset()
 
 
+    def export(self, version="") -> str:
+        """Apply all patches and CodePatches to a version and dump out a new patchfile with all the changes"""
+        vers = self.source.versions()
+        if len(vers) > 1:
+            self._checkout(version)
+        else:
+            version = vers[0]
+
+        new_patch = f"{self.infoObject.Name} {version}\n"
+
+        # Apply all the code patches
+        self.get_file_list()
+        patches = self.apply_code_patches()
+
+        patch: PatchFile
+        for patch in self.versions.get(version, []):
+            self.source.apply(patch)
+            patches.add(patch.Name)
+
+
+        
+        self._check_codepatches() # Ensure all required codepatches have run
+        new_patch += self.source.refresh()
+
+        # Sub all the vars
+        for k, v in self.infoObject.Variables.items():
+            new_patch = new_patch.replace(k, v)
+        return new_patch, patches
+    
     def dump(self):
         print("patches versions:", list(self.versions.keys()))
         print("\npatches:", list(self.patches.keys()))

@@ -48,16 +48,18 @@ class EZ:
         for k, v in replacements.items():
             self.replace(k, v, err=err, count=count)
     
-    def reinsert(self, regex, lines=[], before=False, err=""):
+    def reinsert(self, regex: re.Pattern|str, lines=[], before=False, err=""):
         """Insert lines before or after the given regular expression"""
-        res = re.compile(regex).search(self.contents)
+        if not isinstance(regex, re.Pattern):
+            regex = re.compile(regex)
+        res = regex.search(self.contents)
         if isinstance(lines, str):
             lines = [lines]
         if not res:
             if err:
                 if not isinstance(err, str):
                     err = "cannot find regex '{regex}"
-                raise ValueError(err.format(regex=regex))
+                raise LookupError(err.format(regex=regex))
             return False
         
         f = StringIO()

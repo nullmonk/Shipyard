@@ -12,7 +12,7 @@ from shipyard.sources import SourceManager, SourceProgram
 from shipyard.patch import PatchFile
 
 class GitMgr(SourceManager):
-    def __init__(self, repo: SourceProgram, destination=".") -> None:
+    def __init__(self, repo: SourceProgram) -> None:
         """
         repo: see the Repo object above
         """

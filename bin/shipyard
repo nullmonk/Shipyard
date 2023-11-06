@@ -9,16 +9,16 @@ from shipyard.patch import PatchFile
 from shipyard.generator import new_project
 
 class cli:
-    def __init__(self, directory=".", source_directory="sources"):
+    def __init__(self, directory="."):
         """Maintain a group of patches against a source repository"""
         self.dir = directory
-        self.sdir = source_directory
     
     def _load(self) -> Patches:
+        # TODO: Search up a level or two for the shipfile
         path = os.path.join(self.dir, "shipfile.py")
         if os.path.exists(path):
             # Detected a shipyard file in the current dir, assume this is the patch folder
-            p = Patches(self.dir, source_directory=self.sdir)
+            p = Patches(self.dir)
             return p
             #except Exception as e:
                 #print(f"[!] Detected a shipyard.py file. But there were errors loading it: {e}", file=sys.stderr)
@@ -48,11 +48,11 @@ class cli:
             # Print tag aswell as version
             t = p.infoObject.version_to_tag(v)
             if t != v:
-                v = f"{v} - tags/{t}"
+                t = f"{v} - tags/{t}"
             if v in p.versions:
-                print(f"{v} - {len(p.versions[v])} patches")
+                print(f"{t} - {len(p.versions[v])} patches")
             else:
-                print(v)
+                print(t)
 
     def import_patch(self, name, description=""):
         """import a new patchfile
@@ -105,25 +105,11 @@ class cli:
     def export(self, version):
         """Export the version into a single patchfile"""
         p = self._load()
-        vers = p.source.versions()
-        if len(vers) > 1:
-            p.source.checkout(version)
-        else:
-            version = vers[0]
-        res = f"{p.infoObject.Name} {version}\n"
-        p.source.reset()
-        for patch in p.versions.get(version, []):
-            p.source.apply(patch)
-
-        # Apply all the code patches
-        p.get_file_list()
         try:
-            p.apply_code_patches()
+            res, patches = p.export(version)
         except Exception as e:
             print("[!]", e)
             quit(1)
-        
-        res += p.source.refresh()
         print(res)
     
     def list_source_files(self):
