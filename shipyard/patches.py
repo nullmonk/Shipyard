@@ -130,11 +130,14 @@ class Patches:
         closestVers = getClosestVersions(version, list(self.versions.keys()))
         if version in self.versions:
             closestVers = [version] + closestVers
-        patches = self.versions.get(closestVers[0]) # Get 
-        print(f"[*] Attempting to patch {version} with {len(patches)} patches from version {closestVers[0]}")
+        patches = self.versions.get(closestVers[0], [])
+        if not patches:
+            print(f"[!] WARNING: No patchfiles found for version '{closestVers[0]}'")
+        else:
+            print(f"[*] Attempting to patch {version} with {len(patches)} patches from version {closestVers[0]}")
+            outdir = path.join(self.infoObject.Patches, version)
+            makedirs(outdir, exist_ok=True)
         self._checkout(version)
-        outdir = path.join(self.infoObject.Patches, version)
-        makedirs(outdir, exist_ok=True)
         for p in patches:
             try:
                 self.source.apply(p)
@@ -153,7 +156,8 @@ class Patches:
                 # Fall back to trying every similar patch
                 if not self.apply_similar_patch(p, closestVers, outdir):
                     print("[!] Failed to find a valid patch for", p.Name)
-        print("[+] Saved patches to", outdir)
+        if patches:
+            print("[+] Saved patches to", outdir)
 
     def test_patch(self, patch: PatchFile):
         """Test a patchfile on all versions of a source code"""
