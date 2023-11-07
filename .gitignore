@@ -4,6 +4,8 @@ openssh-server/*
 *.patch
 shipfile.py
 
+logs/*
+
 # Distribution / packaging
 .Python
 env/

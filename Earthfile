@@ -8,8 +8,8 @@ FROM busybox
 # All debian-based systems will use this as the base image. Does not install anything specific to the package being built,
 # just generic tooling. Needs built once per source
 deb-setup:
-    ARG --required SOURCE
-    FROM $SOURCE
+    ARG --required source
+    FROM $source
     # Enable source repos and update
     RUN sed -i 's/# deb-src/deb-src/' /etc/apt/sources.list && \
         apt-get update && \
@@ -23,24 +23,24 @@ deb-setup:
 # Install the deps for a specific package
 deb-deps:
     FROM +deb-setup
-    ARG --required BUILD_PACKAGE
+    ARG --required package
     WORKDIR /tmp/build
-    RUN apt-get build-dep -y $BUILD_PACKAGE && \
-        apt-get install -y $BUILD_PACKAGE && \
-        apt-get source $BUILD_PACKAGE
+    RUN apt-get build-dep -y $package && \
+        apt-get install -y $package && \
+        apt-get source $package
 
 
 #####
 # Redhat based systems go here
 #####
 rhel-setup:
-    ARG --required SOURCE
-    FROM $SOURCE
+    ARG --required source
+    FROM $source
     # TODO: Package installs here
 
 rhel-deps:
     FROM +rhel-setup
-    ARG --required BUILD_PACKAGE
+    ARG --required package
     # TODO: Package installs here
     RUN echo "Not Implemented" && exit 127
 
@@ -49,15 +49,15 @@ rhel-deps:
 # Arch
 #####
 arch-setup:
-    ARG --required SOURCE
-    FROM $SOURCE
+    ARG --required source
+    FROM $source
     RUN sed -i 's:#ParallelDownloads:ParallelDownloads:' /etc/pacman.conf && \
         pacman -Syu --noconfirm python python-pip base-devel
     # TODO: Package installs here
 
 arch-deps:
     FROM +arch-setup
-    ARG --required BUILD_PACKAGE
+    ARG --required package
     # TODO: Package installs here
     RUN echo "Not Implemented" && exit 127
 
@@ -66,26 +66,26 @@ arch-deps:
 ####
 build:
     # Docker file to build on
-    ARG --required SOURCE
+    ARG --required source
     # Package that we want to build against
-    ARG --required BUILD_PACKAGE
+    ARG --required package
     # Set to "true" to save the image. Useful for debugging
-    ARG EXPORT = ""
+    ARG export = ""
     # If Specified, use this shipfile for generating patches
-    ARG SHIPFILE
+    ARG shipfile
     # Patchfile that we want to use
-    ARG PATCHFILE = /tmp/build/$BUILD_PACKAGE.patch
+    ARG patchfile = /tmp/build/$package.patch
     
-    IF [[ "$EXPORT" =~ "([Tt]rue|[Yy]es)" ]]
-        ARG IMAGE_NAME = $BUILD_PACKAGE-builder:latest
+    IF [[ "$export" =~ "([Tt]rue|[Yy]es)" ]]
+        ARG IMAGE_NAME = $package-builder:latest
     END
-    IF [[ "$SOURCE" =~ "(debian:|ubuntu:)" ]]
+    IF [[ "$source" =~ "(debian:|ubuntu:)" ]]
         FROM +deb-deps
         ENV BUILD_MODE=deb
-    ELSE IF [[ "$SOURCE" =~ "(centos:|rocky:|fedora:|amazonlinux:)" ]]
+    ELSE IF [[ "$source" =~ "(centos:|rocky:|fedora:|amazonlinux:)" ]]
         FROM +rhel-deps
         ENV BUILD_MODE=rpm
-    ELSE IF [[ "$SOURCE" =~ "(archlinux:)" ]]
+    ELSE IF [[ "$source" =~ "(archlinux:)" ]]
         FROM +arch-setup
         ENV BUILD_MODE=arch
     ELSE
@@ -93,31 +93,44 @@ build:
     END
 
     # Install shipyard for us to use
-    RUN pip install git+https://github.com/micahjmartin/Shipyard@develop
+    #RUN pip install git+https://github.com/micahjmartin/Shipyard@develop
+    COPY . /opt/install
+    RUN pip install /opt/install
 
-    COPY build.py /tmp/builder
-    IF [ "$PATCHFILE" != "/tmp/build/$BUILD_PACKAGE.patch" ]
-        COPY $PATCHFILE "/tmp/build/$BUILD_PACKAGE.patch"
+    COPY shipyard/build.py /tmp/builder
+    IF [ "$patchfile" != "/tmp/build/$package.patch" ]
+        COPY $patchfile "/tmp/build/$package.patch"
     # If we are given a shipfile and not a Patchfile, generate a patch using shipyard
-    ELSE IF [ "$SHIPFILE" != "" ]
+    ELSE IF [ "$shipfile" != "" ]
         # Shipfile should be a directory with a shipfile and patches
-        COPY $SHIPFILE /tmp/shipyard
-
+        COPY $shipfile /tmp/shipyard/
         # Save here just incase shipyard errors
         IF [ "$IMAGE_NAME" != "" ]
             SAVE IMAGE $IMAGE_NAME
         END
-        RUN python3 /tmp/builder gen /tmp/shipyard $PATCHFILE --package $BUILD_PACKAGE
+        RUN python3 /tmp/builder gen /tmp/shipyard $patchfile --package $package
     ELSE
-        RUN echo "--PATCHFILE or --SHIPFILE must be passed to Earthly"
+        RUN echo "--patchfile or --shipfile must be passed to Earthly" && exit 127
     END
 
     # Now apply the patches
-    RUN python3 /tmp/builder apply $PATCHFILE --package $BUILD_PACKAGE
+    RUN python3 /tmp/builder apply $patchfile --package $package
 
     # Resave the image with the new settings
     IF [ "$IMAGE_NAME" != "" ]
         SAVE IMAGE $IMAGE_NAME
     END
 
-    #RUN python3 /tmp/builder build $BUILD_PACKAGE
+    RUN (python3 /tmp/builder build $package || touch /tmp/error) | tee /tmp/build.log
+
+    IF [ -f "/tmp/build.log" ]
+        SAVE ARTIFACT /tmp/build.log AS LOCAL logs/
+    END
+    IF [ -f "/tmp/error" ]
+        RUN echo "Build failed" && exit 127
+    ELSE
+        RUN echo "build worked"
+    END
+    IF [ "$BUILD_MODE" = "deb" ]
+        SAVE ARTIFACT *_amd64.deb AS LOCAL build/
+    END

@@ -15,7 +15,7 @@ import glob
 
 from dataclasses import dataclass
 from shipyard.patches import Patches
-from shipyard.patch import PatchFile
+from shipyard.utils import MultiWriter
 
 @dataclass
 class Pkg:
@@ -42,9 +42,23 @@ def run(folder, args, err="", **kwargs):
         raise ValueError(f"{err}: {res.stdout}\n{res.stderr}")
     return res
 
-def GeneratePatch(shipfile, pkg: Pkg) -> str:
-    pth, _ = os.path.split(shipfile)
-    p = Patches(pth)
+def GeneratePatch(shipcontext, pkg: Pkg) -> str:
+    """Generate a patch using shipyard
+    shipcontext can either be file, dir, or zipfile
+
+    if its a dir, check for a shipfile in it
+    if its a zip, unzip it and use that dir as the new shipcontext
+    if its a file, thats the shipfile
+    """
+    if os.path.isdir(shipcontext):
+        print("build was given a directory. contents:", os.listdir(shipcontext))
+        p = Patches(shipcontext)
+    elif os.path.isfile(shipcontext):
+        #TODO: Check if its a zip file here or maybe have shipyard handle that part?
+        print("build was given a file: " + shipcontext)
+        pth, _ = os.path.split(shipcontext)
+        p = Patches(pth)
+
     p.patch_version(pkg.Version)
     patch, _ = p.export(pkg.Version)
     return patch
@@ -91,12 +105,13 @@ class cli:
         if not os.path.isdir(pkg.Folder):
             print(f"[!] Source folder '{pkg.Folder}' not found. Was the source package installed properly?")
             exit(1)
+        return pkg
 
-    def gen(self, shipfile, patchfile, package=""):
+    def gen(self, shipcontext, patchfile, package=""):
         """Generate a patch for the current app version using the given shipfile"""
         pkg = self._get_pkg(package)
         # Use shipyard to generate a patchfile now for this version
-        patch = GeneratePatch(shipfile, pkg)
+        patch = GeneratePatch(shipcontext, pkg)
         if not patch:
             raise ValueError("Could not export patch!")
         with open(patchfile, "w") as f:
@@ -107,29 +122,34 @@ class cli:
         """Apply a patchfile to the package"""
         pkg = self._get_pkg(package)
         print(f"[*] applying patchfile {patchfile} to {pkg.Name}-{pkg.Version}")
-
-        res = run(pkg.Folder, ["quilt", "import", patchfile], "Error importing quilt patch")
-        print(res.stdout)
-        res = run(pkg.Folder, ["quilt", "push"], "Error pushing quilt patch")
-        print(res.stdout)
-        res = run(pkg.Folder, ["quilt", "refresh"], "Error refreshing quilt patch")
-        print(res.stdout)
+        
+        if self.mode == "deb":
+            res = run(pkg.Folder, ["quilt", "import", patchfile], "Error importing quilt patch")
+            print(res.stdout)
+            res = run(pkg.Folder, ["quilt", "push"], "Error pushing quilt patch")
+            print(res.stdout)
+            res = run(pkg.Folder, ["quilt", "refresh"], "Error refreshing quilt patch")
+            print(res.stdout)
+            return
+        raise NotImplementedError(f"Cannot apply on '{self.mode}' systems")
     
     def build(self, package=""):
         """Build the source after applying patches"""
         pkg = self._get_pkg(package)
-        env = os.environ.copy()
-        env["DEB_BUILD_OPTIONS"] = "notest nocheck"
-        env["DEBUILD_DPKG_BUILDPACKAGE_OPTS"] = "-d"
-        res = subprocess.run(
-            ["debuild", "--no-lintian", "-d", "-uc", "-us", "-b"],
-            stdout=sys.stdout,
-            stderr=sys.stderr,
-            cwd=pkg.Folder,
-            encoding="utf-8",
-            env=env
-        )
-        print(res.returncode)
+        if self.mode == "deb":
+            env = os.environ.copy()
+            env["DEB_BUILD_OPTIONS"] = "notest nocheck"
+            env["DEBUILD_DPKG_BUILDPACKAGE_OPTS"] = "-d"
+            res = subprocess.run(
+                ["debuild", "--no-lintian", "-d", "-uc", "-us", "-b"],
+                stdout=sys.stdout,
+                stderr=sys.stderr,
+                cwd=pkg.Folder,
+                encoding="utf-8",
+                env=env
+            )
+            exit(res.returncode)
+        raise NotImplementedError(f"Cannot apply on '{self.mode}' systems")
 
 if __name__ == '__main__':
     fire.Fire(cli)

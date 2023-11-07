@@ -20,12 +20,12 @@ class Patches:
         self.code_patches = {} # Patches that are functions and not .patch files
         self.code_res = defaultdict(list) # when a file matches an RE in this array, goto the func it points to
         self.versions = {}
-        self.infoObject: SourceProgram = None
-        self._ver = None
+        self.infoObject: SourceProgram
         self._files = [] # List of all files in the source
         self.load()
         # If we wanted, we could use a different source manager here
         self.source:SourceManager = GitMgr(self.infoObject)
+        self._ver = self.infoObject.tag_to_version(self.source.version())
 
     def _checkout(self, version):
         """Checkout a version"""

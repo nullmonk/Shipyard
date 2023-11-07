@@ -24,6 +24,16 @@ class GitMgr(SourceManager):
             if res.returncode != 0:
                 raise ValueError(res.stderr)
     
+    def version(self) -> str:
+        """Return the current version"""
+        res = subprocess.run(
+            ["git", "describe", "--tags"],
+            capture_output=True,
+            cwd=self.r.Directory,
+            encoding="utf-8"
+        )
+        return res.stdout.strip()
+
     def versions(self) -> list[str]:
         res = subprocess.run(
             ["git", "--no-pager", "tag", "-l", self.r.VersionTags],
