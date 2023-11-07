@@ -15,7 +15,6 @@ import glob
 
 from dataclasses import dataclass
 from shipyard.patches import Patches
-from shipyard.utils import MultiWriter
 
 @dataclass
 class Pkg:

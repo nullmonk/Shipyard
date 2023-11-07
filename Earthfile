@@ -36,13 +36,20 @@ deb-deps:
 rhel-setup:
     ARG --required source
     FROM $source
-    # TODO: Package installs here
+    RUN yum update -y && yum install -y gcc rpmdevtools yum-utils make nc vim python3 python3-pip
 
 rhel-deps:
     FROM +rhel-setup
     ARG --required package
     # TODO: Package installs here
-    RUN echo "Not Implemented" && exit 127
+    RUN yum-builddep -y $package && \
+        python3 -m pip install dataclasses
+    RUN useradd -m mockbuild && \
+        usermod -G wheel mockbuild && \
+        echo "%wheel  ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers && \
+        echo "root:toor" | chpasswd && rpmdev-setuptree && \
+        echo '%_topdir      %(echo $HOME)/rpmbuild' > ~/.rpmmacros && \
+        yumdownloader --source $package
 
 
 #####
@@ -74,8 +81,13 @@ build:
     # If Specified, use this shipfile for generating patches
     ARG shipfile
     # Patchfile that we want to use
-    ARG patchfile = /tmp/build/$package.patch
+    ARG patchfile
     
+    # Enfore we have ONE of the two args
+    IF [ "$patchfile" = "" ] && [ "$shipfile" = "" ]
+        RUN echo "--patchfile or --shipfile must be passed to Earthly" && exit 127
+    END
+
     IF [[ "$export" =~ "([Tt]rue|[Yy]es)" ]]
         ARG IMAGE_NAME = $package-builder:latest
     END
@@ -95,10 +107,10 @@ build:
     # Install shipyard for us to use
     #RUN pip install git+https://github.com/micahjmartin/Shipyard@develop
     COPY . /opt/install
-    RUN pip install /opt/install
+    RUN python3 -m pip install /opt/install
 
     COPY shipyard/build.py /tmp/builder
-    IF [ "$patchfile" != "/tmp/build/$package.patch" ]
+    IF [ "$patchfile" != "" ]
         COPY $patchfile "/tmp/build/$package.patch"
     # If we are given a shipfile and not a Patchfile, generate a patch using shipyard
     ELSE IF [ "$shipfile" != "" ]
@@ -108,13 +120,11 @@ build:
         IF [ "$IMAGE_NAME" != "" ]
             SAVE IMAGE $IMAGE_NAME
         END
-        RUN python3 /tmp/builder gen /tmp/shipyard $patchfile --package $package
-    ELSE
-        RUN echo "--patchfile or --shipfile must be passed to Earthly" && exit 127
+        RUN python3 /tmp/builder gen /tmp/shipyard "/tmp/build/$package.patch" --package $package
     END
 
     # Now apply the patches
-    RUN python3 /tmp/builder apply $patchfile --package $package
+    RUN python3 /tmp/builder apply "/tmp/build/$package.patch" --package $package
 
     # Resave the image with the new settings
     IF [ "$IMAGE_NAME" != "" ]
