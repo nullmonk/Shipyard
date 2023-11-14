@@ -24,3 +24,28 @@ The directory to search in for patch files. This directory will contain version 
 
 #### source_directory
 The directory which contains the source repo, relative to the Shipfile. Can either be a string or a function which returns a string.
+
+#### Variables
+Sometimes its useful to quickly change strings in a binary or to allow a builder to update values without touching the patchfiles. This is possible with the `Variables` dictionary in the Shipfile
+
+```python
+import uuid
+
+class Shipfile:
+    ...
+
+    Variables = {
+        "__PASSWORD__": "bananananas", # Special Password
+        "__BUILD_UUID__": uuid.uuid4(), # Random UUID to put in the code
+    }
+```
+
+Variables are only subsituted when running `shipyard export`.
+
+### Functions
+
+#### `tag_to_version(tag) -> str`
+
+#### `version_to_tag(version) -> str`
+
+#### `is_version_ignored(version) -> bool`

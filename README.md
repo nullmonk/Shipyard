@@ -174,7 +174,11 @@ You may then export the patches to a single patchfile for use later
 shipyard export v9.4
 ```
 
-CodePatches will be included in the release patch
+CodePatches and Variables will be included in the release patch file.
+
+### Building the Package
+
+See [Building](./docs/Building.md) for more details.
 
 ## Examples
 Not many examples of repositories managed with Shipyard are open source, but [free-da](https://github.com/micahjmartin/free-da) is one that makes exclusive use of

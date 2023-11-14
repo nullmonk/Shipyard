@@ -1,8 +1,4 @@
-openssh-server/*
 *.pyc
-*.diff
-*.patch
-shipfile.py
 
 logs/*
 

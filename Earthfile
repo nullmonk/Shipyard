@@ -95,10 +95,10 @@ build:
     IF [[ "$export" =~ "([Tt]rue|[Yy]es)" ]]
         ARG IMAGE_NAME = $package-builder:latest
     END
-    IF [[ "$source" =~ "(debian:|ubuntu:)" ]]
+    IF [[ "$source" =~ "(debian:|ubuntu:|linuxmintd|kalilinux)" ]]
         FROM +deb-deps
         ENV BUILD_MODE=deb
-    ELSE IF [[ "$source" =~ "(centos:|rocky:|fedora:|amazonlinux:)" ]]
+    ELSE IF [[ "$source" =~ "(centos:|rockylinux:|fedora:|amazonlinux:)" ]]
         FROM +rhel-deps
         ENV BUILD_MODE=rpm
     ELSE IF [[ "$source" =~ "(archlinux:)" ]]
@@ -125,11 +125,11 @@ build:
         IF [ "$IMAGE_NAME" != "" ]
             SAVE IMAGE $IMAGE_NAME
         END
-        RUN python3 /tmp/builder gen /tmp/shipyard "/tmp/build/$package.patch" --package $package | tee -a /tmp/build.log
+        RUN python3 /tmp/builder gen /tmp/shipyard "/tmp/build/$package.patch" --package $package 2>&1 | tee -a /tmp/build.log
     END
 
     # Now apply the patches
-    RUN python3 /tmp/builder apply "/tmp/build/$package.patch" --package $package | tee -a /tmp/build.log
+    RUN python3 /tmp/builder apply "/tmp/build/$package.patch" --package $package 2>&1 | tee -a /tmp/build.log
 
     # Resave the image with the new settings
     IF [ "$IMAGE_NAME" != "" ]
