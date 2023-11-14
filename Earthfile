@@ -36,20 +36,23 @@ deb-deps:
 rhel-setup:
     ARG --required source
     FROM $source
-    RUN yum update -y && yum install -y gcc rpmdevtools yum-utils make nc vim python3 python3-pip
+    RUN yum update -y && yum install -y gcc rpmdevtools yum-utils make nc vim python3 python3-pip git
 
 rhel-deps:
     FROM +rhel-setup
     ARG --required package
+    WORKDIR /tmp/build
     # TODO: Package installs here
     RUN yum-builddep -y $package && \
         python3 -m pip install dataclasses
-    RUN useradd -m mockbuild && \
+    RUN useradd -m mockbuild && groupadd mock && \
         usermod -G wheel mockbuild && \
         echo "%wheel  ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers && \
         echo "root:toor" | chpasswd && rpmdev-setuptree && \
-        echo '%_topdir      %(echo $HOME)/rpmbuild' > ~/.rpmmacros && \
-        yumdownloader --source $package
+        echo '%_topdir      /tmp/build' > ~/.rpmmacros && \
+        yumdownloader --source $package && \
+        rpm -ivh *.src.rpm && \
+        rpmbuild -bp SPECS/*.spec
 
 
 #####
@@ -83,6 +86,7 @@ build:
     # Patchfile that we want to use
     ARG patchfile
     
+    ARG artifacts = $package # Artifacts to extract
     # Enfore we have ONE of the two args
     IF [ "$patchfile" = "" ] && [ "$shipfile" = "" ]
         RUN echo "--patchfile or --shipfile must be passed to Earthly" && exit 127
@@ -110,6 +114,7 @@ build:
     RUN python3 -m pip install /opt/install
 
     COPY shipyard/build.py /tmp/builder
+    RUN echo "[SHIPYARD] Initiating build of $package on $source ... patchfile=$patchfile shipfile=$shipfile" | tee /tmp/build.log
     IF [ "$patchfile" != "" ]
         COPY $patchfile "/tmp/build/$package.patch"
     # If we are given a shipfile and not a Patchfile, generate a patch using shipyard
@@ -120,27 +125,32 @@ build:
         IF [ "$IMAGE_NAME" != "" ]
             SAVE IMAGE $IMAGE_NAME
         END
-        RUN python3 /tmp/builder gen /tmp/shipyard "/tmp/build/$package.patch" --package $package
+        RUN python3 /tmp/builder gen /tmp/shipyard "/tmp/build/$package.patch" --package $package | tee -a /tmp/build.log
     END
 
     # Now apply the patches
-    RUN python3 /tmp/builder apply "/tmp/build/$package.patch" --package $package
+    RUN python3 /tmp/builder apply "/tmp/build/$package.patch" --package $package | tee -a /tmp/build.log
 
     # Resave the image with the new settings
     IF [ "$IMAGE_NAME" != "" ]
         SAVE IMAGE $IMAGE_NAME
     END
 
-    RUN (python3 /tmp/builder build $package || touch /tmp/error) | tee /tmp/build.log
+    # Save the log to a file, also create an error file if the command fails
+    RUN (python3 /tmp/builder build $package || touch /tmp/error) 2>&1 | tee -a /tmp/build.log
 
     IF [ -f "/tmp/build.log" ]
         SAVE ARTIFACT /tmp/build.log AS LOCAL logs/
     END
+
+    # If the build failed, exitout
     IF [ -f "/tmp/error" ]
         RUN echo "Build failed" && exit 127
     ELSE
         RUN echo "build worked"
     END
     IF [ "$BUILD_MODE" = "deb" ]
-        SAVE ARTIFACT *_amd64.deb AS LOCAL build/
+        SAVE ARTIFACT $artifacts*_amd64.deb AS LOCAL build/deb/
+    ELSE IF [ "$BUILD_MODE" = "rpm" ]
+        SAVE ARTIFACT RPMS/*/$artifacts*.rpm AS LOCAL build/rpm/
     END
