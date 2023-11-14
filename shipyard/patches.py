@@ -1,4 +1,3 @@
-import sys
 import inspect
 import glob
 import re
@@ -6,6 +5,7 @@ import fnmatch
 
 from os import path, walk, makedirs
 from collections import defaultdict
+from typing import List
 
 from shipyard.patch import PatchFile
 from shipyard.utils import _load_object, getClosestVersions
@@ -68,7 +68,7 @@ class Patches:
             if not self.versions[version]:
                 del self.versions[version]
     
-    def get_file_list(self) -> list[str]:
+    def get_file_list(self) -> List[str]:
         """List files, honoring the .gitignore
         
         https://stackoverflow.com/questions/70745060/how-to-list-directory-files-excluding-files-in-gitignore

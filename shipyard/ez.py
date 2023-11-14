@@ -24,7 +24,7 @@ class EZ:
     def close(self):
         self.__exit__(None, None, None)
     
-    def replace(self, k: str | re.Pattern, v, err="", count=0) -> bool:
+    def replace(self, k: "str | re.Pattern", v, err="", count=0) -> bool:
         """Replace k with v in the string. If k is a re.Pattern, it will be searched. If not, a simple string replacement
         will occur. If err is defined, and the string cannot be found, 'err' will be raise as a LookupError with err templated with k and v"""
         if not isinstance(err, str):
@@ -52,7 +52,7 @@ class EZ:
         for k, v in replacements.items():
             self.replace(k, v, err=err, count=count)
     
-    def reinsert(self, regex: re.Pattern|str, lines=[], before=False, err=""):
+    def reinsert(self, regex: "str | re.Pattern", lines=[], before=False, err=""):
         """Insert lines before or after the given regular expression"""
         if not isinstance(regex, re.Pattern):
             regex = re.compile(regex)

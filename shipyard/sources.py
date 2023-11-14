@@ -3,7 +3,10 @@
 
 import os
 import inspect
+
 from dataclasses import dataclass
+from typing import List
+
 from shipyard.patch import PatchFile
 
 @dataclass
@@ -63,7 +66,7 @@ class SourceManager:
         """Return the current version of the source code"""
         raise NotImplementedError()
 
-    def versions(self) -> list[str]:
+    def versions(self) -> List[str]:
         """Return all the versions of the source code that we have"""
         raise NotImplementedError()
 

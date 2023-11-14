@@ -3,6 +3,7 @@ import sys
 import inspect
 
 from os import path
+from typing import List
 
 def _load_object(fil):
     """
@@ -21,7 +22,7 @@ def _load_object(fil):
             return m
 
 
-def getClosestVersions(version: str, versions: list[str]) -> str:
+def getClosestVersions(version: str, versions: List[str]) -> str:
     """Get the versions closest to the passed in version, in order"""
     vs = set(versions)
     vs.add(version)

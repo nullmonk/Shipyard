@@ -13,8 +13,10 @@ import subprocess
 import fire
 import glob
 
+from distutils.dir_util import copy_tree
 from dataclasses import dataclass
 from shipyard.patches import Patches
+from shipyard.ez import EZ
 
 @dataclass
 class Pkg:
@@ -64,10 +66,6 @@ def GeneratePatch(shipcontext, pkg: Pkg) -> str:
 
 
 
-def rpm(args):
-    raise NotImplementedError("RPM functionality is not implemented")
-
-
 # TODO: SUPPORTED_MODES = ["arch", "deb", "rpm"]
 SUPPORTED_MODES = ["deb"]
 
@@ -96,6 +94,21 @@ class cli:
                 package = groups.group(1)
             pkg = Pkg(package, groups.group(1), groups.group(2), groups.group(4), "")
             pkg.Folder = f"{pkg.Name}-{pkg.Version}"
+            print(f"[*] found '{pkg.Name}-{pkg.Version}' from file '{f[0]}'")
+        elif self.mode == "rpm":
+            f = glob.glob("*.src.rpm")
+            if not f:
+                print("[!] No source RPM file laying around!. Exiting")
+                exit(127)
+            reg = r"([^-]+)-([\d\w\.]+)(-(.+))?\.src.rpm"
+            groups = re.compile(reg).match(f[0])
+            if not groups:
+                print(f"[!] Filename passed was not valid. Needs to match regex r'{reg}'. {f}")
+                exit(1)
+            if not package:
+                package = groups.group(1)
+            pkg = Pkg(package, groups.group(1), groups.group(2), groups.group(4), "")
+            pkg.Folder = f"BUILD/{pkg.Name}-{pkg.Version}"
             print(f"[*] found '{pkg.Name}-{pkg.Version}' from file '{f[0]}'")
         else:
             print("[!] mode not supported for gen", self.mode)
@@ -130,6 +143,37 @@ class cli:
             res = run(pkg.Folder, ["quilt", "refresh"], "Error refreshing quilt patch")
             print(res.stdout)
             return
+        if self.mode == "rpm":
+            # A tad more complicated than just a quilt import. Read teh SPEC file and add a patch
+            # Find the spec file
+            f = glob.glob("SPECS/*.spec")
+            if not f:
+                print("[!] No SPEC file laying around!. Exiting")
+                exit(127)
+            
+            print(f"[*] copying {pkg.Folder} to {pkg.Folder}-new")
+            copy_tree(pkg.Folder, pkg.Folder + "-new")
+            print(f"[*] Applying patch file to {pkg.Folder}-new")
+            res = run(pkg.Folder + "-new", ["patch", "-p1", "-f", "-i", patchfile], "Error importing quilt patch")
+            print(res.stdout)
+            print("[*] Adding patch to spec file")
+            with EZ(f[0]) as z:
+                # Find the highest numbered patch file
+                last = -1
+                for i in z.contents.splitlines():
+                    if i.startswith("Patch"):
+                        i = i.split(":")[0]
+                        i = i[len("Patch"):]
+                        if i.isnumeric():
+                            last = max(int(i), last)
+                
+                if last > 0:
+                    new = f"Patch{last+1}: {pkg.OriginalName}.patch"
+                    z.reinsert(re.compile(f"Patch{last}:.+\\n"), new)
+                    print(f"[*] Added {new} to {f[0]}")
+                else:
+                    raise ValueError("Could not find any Patches in the spec file")
+            return
         raise NotImplementedError(f"Cannot apply on '{self.mode}' systems")
     
     def build(self, package=""):
@@ -146,6 +190,19 @@ class cli:
                 cwd=pkg.Folder,
                 encoding="utf-8",
                 env=env
+            )
+            exit(res.returncode)
+        elif self.mode == "rpm":
+            # Find the spec file
+            f = glob.glob("SPECS/*.spec")
+            if not f:
+                print("[!] No SPEC file laying around!. Exiting")
+                exit(127)
+            res = subprocess.run(
+                ["rpmbuild", "--nocheck", "-bb", f[0]],
+                stdout=sys.stdout,
+                stderr=sys.stderr,
+                encoding="utf-8",
             )
             exit(res.returncode)
         raise NotImplementedError(f"Cannot apply on '{self.mode}' systems")

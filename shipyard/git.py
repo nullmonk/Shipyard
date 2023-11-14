@@ -1,13 +1,10 @@
 # Handle git repositories, extract all the tags
 # (versions) and check them out accordingly
 import subprocess
-import re
 import os
-import inspect
 
-from dataclasses import dataclass
+from typing import List
 
-from shipyard.utils import getMajor
 from shipyard.sources import SourceManager, SourceProgram
 from shipyard.patch import PatchFile
 
@@ -34,7 +31,7 @@ class GitMgr(SourceManager):
         )
         return res.stdout.strip()
 
-    def versions(self) -> list[str]:
+    def versions(self) -> List[str]:
         res = subprocess.run(
             ["git", "--no-pager", "tag", "-l", self.r.VersionTags],
             capture_output=True,
