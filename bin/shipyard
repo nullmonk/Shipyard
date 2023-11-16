@@ -16,6 +16,7 @@ class cli:
     
     def _load(self) -> Patches:
         # TODO: Search up a level or two for the shipfile
+        # TODO: Search any python files in the current dir
         path = os.path.join(self.dir, "shipfile.py")
         if os.path.exists(path):
             # Detected a shipyard file in the current dir, assume this is the patch folder

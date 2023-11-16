@@ -62,7 +62,10 @@ class Patches:
             for p in files:
                 if not p.endswith(".diff") and not p.endswith(".patch"):
                     continue
-                patch = PatchFile.from_file(path.join(root, p))
+                try:
+                    patch = PatchFile.from_file(path.join(root, p))
+                except:
+                    raise ValueError(f"Invalid patchfile '{p}'")
                 #patch.update(self.infoObject.Variables)
                 self.patches[patch.Name] = patch
                 self.versions[version].add(patch)
@@ -109,7 +112,7 @@ class Patches:
                 self.source.apply(p)
                 contents = self.source.refresh(p)
                 _, fname = path.split(p.Filename)
-                out = path.join(self.infoObject.Patches, v, fname)
+                out = path.join(self._dir, self.infoObject.Patches, v, fname)
                 with open(path.join(out), "w") as f:
                     f.write(contents)
                 print(f"[+] Applied {p.Name} from {v}")
@@ -140,7 +143,7 @@ class Patches:
             print(f"[!] WARNING: No patchfiles found for version '{closestVers[0]}'")
         else:
             print(f"[*] Attempting to patch {version} with {len(patches)} patches from version {closestVers[0]}")
-            outdir = path.join(self.infoObject.Patches, version)
+            outdir = path.join(self._dir, self.infoObject.Patches, version)
             makedirs(outdir, exist_ok=True)
         self._checkout(version)
         for p in patches:
