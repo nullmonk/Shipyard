@@ -67,7 +67,7 @@ def GeneratePatch(shipcontext, pkg: Pkg) -> str:
 
 
 # TODO: SUPPORTED_MODES = ["arch", "deb", "rpm"]
-SUPPORTED_MODES = ["deb"]
+SUPPORTED_MODES = ["deb", "rpm"]
 
 class cli:
     def __init__(self, mode=""):
