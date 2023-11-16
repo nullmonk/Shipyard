@@ -48,4 +48,4 @@ Variables are only subsituted when running `shipyard export`.
 
 #### `version_to_tag(version) -> str`
 
-#### `is_version_ignored(version) -> bool`
+#### `is_version_ignored(version: shipyard.Version) -> bool`

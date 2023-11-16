@@ -10,6 +10,7 @@ from typing import List
 from shipyard.patch import PatchFile
 from shipyard.utils import _load_object, getClosestVersions
 from shipyard.git import SourceProgram, SourceManager, GitMgr
+from shipyard.version import Version
 
 class Patches:
     """A manager for the patches that loops through a directory to figure out
@@ -30,7 +31,7 @@ class Patches:
     def _checkout(self, version):
         """Checkout a version"""
         self.source.reset()
-        self.source.checkout(version)
+        self.source.checkout(Version(version))
         self._ver = version
 
     def _load_code_patch(self, cp):
@@ -221,7 +222,7 @@ class Patches:
                 setattr(f, "__patch_has_run", True)
 
                 if len(spec.args) > 1:
-                    f(file, self._ver)
+                    f(file, Version(self._ver))
                 else:
                     f(file) # Dont pass the version to this one
             except Exception as e:

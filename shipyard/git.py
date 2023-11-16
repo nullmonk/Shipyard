@@ -7,6 +7,7 @@ from typing import List
 
 from shipyard.sources import SourceManager, SourceProgram
 from shipyard.patch import PatchFile
+from shipyard import Version
 
 class GitMgr(SourceManager):
     def __init__(self, repo: SourceProgram) -> None:
@@ -44,7 +45,7 @@ class GitMgr(SourceManager):
         versions = []
         for tag in out.split():
             version = self.r.tag_to_version(tag)
-            if version and not self.r.is_version_ignored(version):
+            if version and not self.r.is_version_ignored(Version(version)):
                 versions.append(version)
         if not versions:
             versions = ["HEAD"]
@@ -71,8 +72,6 @@ class GitMgr(SourceManager):
         args = ["git", "apply","-v", "--recount"]
         if reject:
             args.insert(2, "--reject")
-        if check:
-            args.insert(2, "--check")
         res = subprocess.run(
             args,
             capture_output=True,
@@ -80,6 +79,7 @@ class GitMgr(SourceManager):
             input=patch.dump(),
             encoding="utf-8"
         )
+        # print(f"[{res.returncode}] {args}\n", res.stdout, res.stderr) # print debug best debug
         if res.returncode != 0:
             if check:
                 return False

@@ -7,6 +7,7 @@ import fire
 from shipyard.patches import Patches
 from shipyard.patch import PatchFile
 from shipyard.generator import new_project
+from shipyard.version import Version
 
 class cli:
     def __init__(self, directory="."):
@@ -135,7 +136,7 @@ class cli:
         p = self._load()
         p.source.reset()
         if version:
-            p.source.checkout(version)
+            p.source.checkout(Version(version))
 
 def main():
     #p = Patch.from_file(sys.argv[1])
