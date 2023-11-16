@@ -85,10 +85,10 @@ class cli:
             if not f:
                 print("[!] No APT source DSC file laying around!. Exiting")
                 exit(127)
-            reg = r"(.+)_([\d\w\.]+)(-(.+))?\.dsc"
+            reg = r"(.+)_([\d\w\+\.]+)(-(.+))?\.dsc"
             groups = re.compile(reg).match(f[0])
             if not groups:
-                print(f"[!] Filename passed was not valid. Needs to match regex r'{reg}'")
+                print(f"[!] Filename '{f[0]}' was not valid. Needs to match regex r'{reg}'")
                 exit(1)
             if not package:
                 package = groups.group(1)

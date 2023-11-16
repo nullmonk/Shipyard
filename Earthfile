@@ -113,7 +113,7 @@ build:
     COPY . /opt/install
     RUN python3 -m pip install /opt/install
 
-    COPY shipyard/build.py /tmp/builder
+    COPY bin/shipyard-build /tmp/builder
     RUN echo "[SHIPYARD] Initiating build of $package on $source ... patchfile=$patchfile shipfile=$shipfile" | tee /tmp/build.log
     IF [ "$patchfile" != "" ]
         COPY $patchfile "/tmp/build/$package.patch"
