@@ -122,9 +122,6 @@ build:
         # Shipfile should be a directory with a shipfile and patches
         COPY $shipfile /tmp/shipyard/
         # Save here just incase shipyard errors
-        IF [ "$IMAGE_NAME" != "" ]
-            SAVE IMAGE $IMAGE_NAME
-        END
         RUN python3 /tmp/builder gen /tmp/shipyard "/tmp/build/$package.patch" --package $package 2>&1 | tee -a /tmp/build.log
     END
 
@@ -134,23 +131,25 @@ build:
     # Resave the image with the new settings
     IF [ "$IMAGE_NAME" != "" ]
         SAVE IMAGE $IMAGE_NAME
-    END
-
-    # Save the log to a file, also create an error file if the command fails
-    RUN (python3 /tmp/builder build $package || touch /tmp/error) 2>&1 | tee -a /tmp/build.log
-
-    IF [ -f "/tmp/build.log" ]
-        SAVE ARTIFACT /tmp/build.log AS LOCAL logs/
-    END
-
-    # If the build failed, exitout
-    IF [ -f "/tmp/error" ]
-        RUN echo "Build failed" && exit 127
     ELSE
-        RUN echo "build worked"
-    END
-    IF [ "$BUILD_MODE" = "deb" ]
-        SAVE ARTIFACT $artifacts*_amd64.deb AS LOCAL build/deb/
-    ELSE IF [ "$BUILD_MODE" = "rpm" ]
-        SAVE ARTIFACT RPMS/*/$artifacts*.rpm AS LOCAL build/rpm/
+        # Save the log to a file, also create an error file if the command fails
+        RUN (python3 /tmp/builder build $package || touch /tmp/error) 2>&1 | tee -a /tmp/build.log
+
+        WAIT
+            IF [ -f "/tmp/build.log" ]
+                SAVE ARTIFACT /tmp/build.log AS LOCAL logs/
+            END
+        END
+        # If the build failed, exitout
+        IF [ -f "/tmp/error" ]
+            RUN echo "Build failed" && exit 127
+        ELSE
+            RUN echo "build worked"
+        END
+        IF [ "$BUILD_MODE" = "deb" ]
+            SAVE ARTIFACT $artifacts*_amd64.deb AS LOCAL build/deb/
+        ELSE IF [ "$BUILD_MODE" = "rpm" ]
+            SAVE ARTIFACT RPMS/*/$artifacts*.rpm AS LOCAL build/rpm/
+        END
+
     END

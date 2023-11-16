@@ -124,6 +124,10 @@ class Patches:
     def patch_version(self, version):
         """Patch a version with all the patches from a previous version"""
         actualVers = self.source.versions()
+        if not self.patches:
+            print(f"[!] WARNING: No patchfiles found for '{self.infoObject.Name}'")
+            return
+
         if version not in actualVers:
             raise ValueError(f"Invalid version '{version}'")
         

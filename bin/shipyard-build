@@ -59,7 +59,13 @@ def GeneratePatch(shipcontext, pkg: Pkg) -> str:
         print("build was given a file: " + shipcontext)
         pth, _ = os.path.split(shipcontext)
         p = Patches(pth)
-
+    
+    # If the version isnt an exact match, try to find the closest
+    if pkg.Version not in p.source.versions():
+        for v in p.source.versions():
+            if pkg.Version in v or v in pkg.Version:
+                pkg.Version = v
+                break
     p.patch_version(pkg.Version)
     patch, _ = p.export(pkg.Version)
     return patch
@@ -94,6 +100,7 @@ class cli:
                 package = groups.group(1)
             pkg = Pkg(package, groups.group(1), groups.group(2), groups.group(4), "")
             pkg.Folder = f"{pkg.Name}-{pkg.Version}"
+            pkg.Version = pkg.Version.split("+")[0] # Hack for proftpd
             print(f"[*] found '{pkg.Name}-{pkg.Version}' from file '{f[0]}'")
         elif self.mode == "rpm":
             f = glob.glob("*.src.rpm")
