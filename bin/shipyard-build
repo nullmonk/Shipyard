@@ -67,6 +67,7 @@ def GeneratePatch(shipcontext, pkg: Pkg) -> str:
                 pkg.Version = v
                 break
     p.patch_version(pkg.Version)
+    p.load() # refresh the patches that we know about
     patch, _ = p.export(pkg.Version)
     return patch
 
@@ -135,7 +136,7 @@ class cli:
             raise ValueError("Could not export patch!")
         with open(patchfile, "w") as f:
             f.write(patch)
-        print("[+] Patch saved to " + patchfile)
+        print(f"[+] Patch saved to {patchfile} ({len(patch.splitlines())}  lines)")
 
     def apply(self, patchfile, package=""):
         """Apply a patchfile to the package"""

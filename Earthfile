@@ -108,12 +108,13 @@ build:
         RUN echo "Unsupported Docker image provided. You may need to modify this Earthfile 👀" && exit 127
     END
 
-    # Install shipyard for us to use
+    # Install shipyard from source for most projects
     #RUN pip install git+https://github.com/micahjmartin/Shipyard@develop
+
+    # For development, uncomment the above lines and use this
     COPY . /opt/install
     RUN python3 -m pip install /opt/install
 
-    COPY bin/shipyard-build /tmp/builder
     RUN echo "[SHIPYARD] Initiating build of $package on $source ... patchfile=$patchfile shipfile=$shipfile" | tee /tmp/build.log
     IF [ "$patchfile" != "" ]
         COPY $patchfile "/tmp/build/$package.patch"
@@ -122,34 +123,49 @@ build:
         # Shipfile should be a directory with a shipfile and patches
         COPY $shipfile /tmp/shipyard/
         # Save here just incase shipyard errors
-        RUN python3 /tmp/builder gen /tmp/shipyard "/tmp/build/$package.patch" --package $package 2>&1 | tee -a /tmp/build.log
+        RUN (shipyard-build gen /tmp/shipyard "/tmp/build/$package.patch" --package $package || touch /tmp/error) 2>&1 | tee -a /tmp/build.log
+        IF [ -f "/tmp/error" ]
+            WAIT
+                SAVE ARTIFACT /tmp/build.log AS LOCAL logs/
+                IF [ "$IMAGE_NAME" != "" ]
+                    SAVE IMAGE $IMAGE_NAME
+                END
+            END
+            RUN echo "failed to generate patch" && exit 127
+        END
     END
 
     # Now apply the patches
-    RUN python3 /tmp/builder apply "/tmp/build/$package.patch" --package $package 2>&1 | tee -a /tmp/build.log
-
-    # Resave the image with the new settings
-    IF [ "$IMAGE_NAME" != "" ]
-        SAVE IMAGE $IMAGE_NAME
-    ELSE
-        # Save the log to a file, also create an error file if the command fails
-        RUN (python3 /tmp/builder build $package || touch /tmp/error) 2>&1 | tee -a /tmp/build.log
-
+    RUN (shipyard-build apply "/tmp/build/$package.patch" --package $package || touch /tmp/error) 2>&1 | tee -a /tmp/build.log
+    IF [ -f "/tmp/error" ]
+        RUN (echo -e "Patchfile:\n---------------------\n" && cat /tmp/build/$package.patch) | tee -a /tmp/build.log
         WAIT
-            IF [ -f "/tmp/build.log" ]
-                SAVE ARTIFACT /tmp/build.log AS LOCAL logs/
+            SAVE ARTIFACT /tmp/build.log AS LOCAL logs/
+            IF [ "$IMAGE_NAME" != "" ]
+                SAVE IMAGE $IMAGE_NAME
             END
         END
-        # If the build failed, exitout
-        IF [ -f "/tmp/error" ]
-            RUN echo "Build failed" && exit 127
-        ELSE
-            RUN echo "build worked"
-        END
-        IF [ "$BUILD_MODE" = "deb" ]
-            SAVE ARTIFACT $artifacts*_amd64.deb AS LOCAL build/deb/
-        ELSE IF [ "$BUILD_MODE" = "rpm" ]
-            SAVE ARTIFACT RPMS/*/$artifacts*.rpm AS LOCAL build/rpm/
-        END
+        RUN echo "failed to apply patch" && exit 127
+    END
 
+    # Save the log to a file, also create an error file if the command fails
+    RUN (shipyard-build build $package || touch /tmp/error) 2>&1 | tee -a /tmp/build.log
+    IF [ -f "/tmp/error" ]
+        WAIT
+            SAVE ARTIFACT /tmp/build.log AS LOCAL logs/
+            IF [ "$IMAGE_NAME" != "" ]
+                SAVE IMAGE $IMAGE_NAME
+            END
+        END
+        RUN echo "failed to build" && exit 127
+    END
+    # Save the image if export is enabled
+    IF [ "$IMAGE_NAME" != "" ]
+        SAVE IMAGE $IMAGE_NAME
+    END
+        
+    IF [ "$BUILD_MODE" = "deb" ]
+        SAVE ARTIFACT $artifacts*_amd64.deb AS LOCAL build/deb/
+    ELSE IF [ "$BUILD_MODE" = "rpm" ]
+        SAVE ARTIFACT RPMS/*/$artifacts*.rpm AS LOCAL build/rpm/
     END
