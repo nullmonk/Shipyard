@@ -53,6 +53,8 @@ class Patches:
                     if getattr(func, "__patch_files", False):
                         self._load_code_patch(func)
                 break
+        if not self.infoObject:
+            raise ValueError("Shipfile not detected")
         
         for root, dirs, files in walk(self._dir):
             if dirs:

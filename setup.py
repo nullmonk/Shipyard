@@ -33,7 +33,8 @@ setup(
     ],
     keywords='patch patchfile management security',
     install_requires=[
-        'fire'
+        'fire',
+        'requests',
     ],
     scripts=[
         "bin/shipyard",

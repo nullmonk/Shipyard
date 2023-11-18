@@ -42,6 +42,10 @@ class cli:
             print(e, file=sys.stderr)
             exit(127)
 
+    def jumpstart(self):
+        """Download multiple URLs to create a properly tagged git repo."""
+        pass
+
     def versions(self):
         """List the versions of the source code. Denoting which versions have patches"""
         p = self._load()

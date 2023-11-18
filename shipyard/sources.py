@@ -25,12 +25,13 @@ class SourceProgram:
     VersionTags = "*" # A pattern to match for release version tags in the source
     Variables = {}
     IgnoredVersions = []
+    Urls = [] # Pass a list of urls instead of a git repo
 
     """If the version string is different than the git tag, do the conversions here"""
     version_to_tag = lambda _, s:s
     tag_to_version = lambda _, s:s
     is_version_ignored = lambda _: False
-    _default_attributes = ("source_directory", "tag_to_version", "version_to_tag", "is_version_ignored", "VersionTags", "Patches", "Variables")
+    _default_attributes = ("source_directory", "tag_to_version", "version_to_tag", "is_version_ignored", "Urls", "VersionTags", "Patches", "Variables")
     
     def __init__(self, name, url) -> None:
         self.source_directory = None
