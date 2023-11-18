@@ -19,6 +19,9 @@ class Version(str):
         super().__init__()
         self._v = _to_version_list(s)
     
+    def __hash__(self) -> int:
+        return super().__hash__()
+    
     def __lt__(self, other: str):
         return self._v < _to_version_list(other)
     

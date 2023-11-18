@@ -44,8 +44,8 @@ class GitMgr(SourceManager):
         out = res.stdout
         versions = []
         for tag in out.split():
-            version = self.r.tag_to_version(tag)
-            if version and not self.r.is_version_ignored(Version(version)):
+            version = Version(self.r.tag_to_version(tag))
+            if version and not self.r.is_version_ignored(version):
                 versions.append(version)
         if not versions:
             versions = ["HEAD"]

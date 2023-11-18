@@ -58,6 +58,7 @@ class Patches:
             if dirs:
                 continue
             _, version = path.split(root)
+            version = Version(version)
             self.versions[version] = set()
             for p in files:
                 if not p.endswith(".diff") and not p.endswith(".patch"):
@@ -135,7 +136,7 @@ class Patches:
             raise ValueError(f"Invalid version '{version}'")
         
         # Will return empty list if we dont have any other version patches
-        closestVers = getClosestVersions(version, list(self.versions.keys()))
+        closestVers = getClosestVersions(version, self.versions.keys())
         if version in self.versions:
             closestVers = [version] + closestVers
         patches = self.versions.get(closestVers[0], [])
