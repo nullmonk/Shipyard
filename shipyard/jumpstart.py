@@ -12,8 +12,9 @@ def jumpstart(dest: str, urls: List[str]):
     """Make sure all the URLs are downloaded into the git repo and tagged properly"""
     if not os.path.isdir(dest):
         os.makedirs(dest, exist_ok=True)
-    # can be run several times 
-    subprocess.run("git init", shell=True, cwd=dest)
+    # can be run several times
+    if not os.path.isdir(os.path.join(dest, '.git')):
+        subprocess.run("git init", shell=True, cwd=dest)
 
     # get the versions in the repo
     res = subprocess.run(
@@ -49,7 +50,8 @@ def extensions(urls) -> List[tuple]:
     """
     reg = re.compile(r"[^\d]*(.+)")
     results = []
-    for v in urls:
+    for u in urls:
+        _, v = os.path.split(u)
         match = reg.match(v)
         if not match:
             raise ValueError(f"version could not be determined from '{v}'")
@@ -58,7 +60,7 @@ def extensions(urls) -> List[tuple]:
             raise ValueError("Could not detect file format as determined by shutil")
         
         results.append((
-            v, Version(match.group(1)[:-len(ext)]), fmt
+            u, Version(match.group(1)[:-len(ext)]), fmt
         ))
 
     # Sort the results by version
@@ -79,7 +81,6 @@ def download_version(url: str, version: str, fmt: str, dest: str):
     2. downloads and extract contents into the git
     3. Commit the stuff, tag it
     """
-
     # Check if we have unstaged changes, if so, add them to a commit
     r = subprocess.run("git diff", cwd=dest, shell=True, capture_output=True)
     if len(r.stdout.splitlines()) > 0:
@@ -87,7 +88,6 @@ def download_version(url: str, version: str, fmt: str, dest: str):
         print(r.stdout)
         exit(1)
 
-    print(f"[*] Deleting all files in repository", end='\r')
     for f in os.listdir(dest):
         if not f.startswith(".git"):
             f = os.path.join(dest, f)
@@ -96,9 +96,7 @@ def download_version(url: str, version: str, fmt: str, dest: str):
             elif os.path.isdir(f):
                 shutil.rmtree(f)
     
-    print(f"[*] Downloading {url}", end='\r')
-
-    _, version = os.path.split(url)
+    print(f"[*] Downloading '{version}' ({fmt}) from {url}")
     with tempfile.NamedTemporaryFile() as of:
         res = requests.get(url)
         if res.status_code < 200 or res.status_code >= 300:
@@ -108,23 +106,17 @@ def download_version(url: str, version: str, fmt: str, dest: str):
         with open(of.name, "wb") as f:
             f.write(res.content)
         # Unzip the contents into the directory
-        print(f"[*] Extracting files with {fmt} extractor", end='\r')
-
         # Determine if all the files are stored in a sub-directory, if they are
         # move them out of the sub-dir
         with tempfile.TemporaryDirectory() as td:
             shutil.unpack_archive(of.name, td, fmt)
-        
             src = td
             # Check if there is just a folder inside
             subs = os.listdir(td)
             if len(subs) == 1:
                 src = os.path.join(src, subs[0])
-
-            print(f"[*] Copying extracted files to {dest}", end='\r')
             shutil.copytree(src, dest, dirs_exist_ok=True)
     
     # Make a commit here
-    print(f"[*] Commiting files and tagging with version '{version}'", end='\r')
     commit(dest, url, version)
     return

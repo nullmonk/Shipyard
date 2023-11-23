@@ -13,6 +13,11 @@ shipyard -d MyProject init "<source-url>"
 #### Url
 The URL of the git repo of the source
 
+#### Urls
+Occasionally, source code is not stored properly in a Git repo, instead,
+several version URLs may be specified. From the URLs, a Git repo will be created and tagged
+properly from the URLs
+
 #### VersionTags
 A [glob(7)](https://www.man7.org/linux/man-pages/man7/glob.7.html) patch that will match
 git tags which denote versions. The pattern can be tested in the source repo by using the command `git tag -l 'PATTERN'`.

@@ -33,7 +33,7 @@ class SourceProgram:
     """If the version string is different than the git tag, do the conversions here"""
     version_to_tag = lambda _, s:s
     tag_to_version = lambda _, s:s
-    is_version_ignored = lambda _: False
+    is_version_ignored = lambda *_: False
     _default_attributes = ("Url", "source_directory", "tag_to_version", "version_to_tag", "is_version_ignored", "Urls", "VersionTags", "Patches", "Variables")
     
     def __init__(self, name) -> None:
