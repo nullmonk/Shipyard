@@ -2,11 +2,14 @@
 # (versions) and check them out accordingly
 
 import os
+import re
+import shutil
 import inspect
 
 from dataclasses import dataclass
 from typing import List
 
+from shipyard.version import Version
 from shipyard.patch import PatchFile
 
 @dataclass
@@ -31,13 +34,12 @@ class SourceProgram:
     version_to_tag = lambda _, s:s
     tag_to_version = lambda _, s:s
     is_version_ignored = lambda _: False
-    _default_attributes = ("source_directory", "tag_to_version", "version_to_tag", "is_version_ignored", "Urls", "VersionTags", "Patches", "Variables")
+    _default_attributes = ("Url", "source_directory", "tag_to_version", "version_to_tag", "is_version_ignored", "Urls", "VersionTags", "Patches", "Variables")
     
-    def __init__(self, name, url) -> None:
+    def __init__(self, name) -> None:
         self.source_directory = None
         self.Name = name # unused
         self.Directory = self.Name # internal only
-        self.Url = url
         self._filepath = ""
     
     def resolve_source_directory(self) -> str:
@@ -53,7 +55,7 @@ class SourceProgram:
     @classmethod
     def from_object(cls, obj):
         # convert our incoming object to a SourceProgram
-        o = cls(obj.Name, obj.Url)
+        o = cls(obj.Name)
         o._filepath = inspect.getfile(obj)
         for attr in o._default_attributes:
             setattr(o, attr, getattr(obj, attr, getattr(o, attr)))

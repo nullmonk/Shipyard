@@ -11,6 +11,7 @@ from shipyard.patch import PatchFile
 from shipyard.utils import _load_object, getClosestVersions
 from shipyard.git import SourceProgram, SourceManager, GitMgr
 from shipyard.version import Version
+from shipyard.jumpstart import jumpstart
 
 class Patches:
     """A manager for the patches that loops through a directory to figure out
@@ -24,6 +25,10 @@ class Patches:
         self.infoObject: SourceProgram
         self._files = [] # List of all files in the source
         self.load()
+
+        # Jumpstart the URLs into a git repo _before_ passing to the git MGR
+        if not self.infoObject.Url and self.infoObject.Urls:
+            jumpstart(self.infoObject.resolve_source_directory(), self.infoObject.Urls)
         # If we wanted, we could use a different source manager here
         self.source:SourceManager = GitMgr(self.infoObject)
         self._ver = self.infoObject.tag_to_version(self.source.version())
