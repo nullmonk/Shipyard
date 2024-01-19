@@ -1,15 +1,11 @@
-VERSION --use-function-keyword 0.7
+VERSION --use-function-keyword --try 0.7
 FROM busybox
 
-
-test-base:
-    ARG --required image
-    FROM busybox
-    RUN echo Selecting busybox instead of $image
 
 #####
 # Debian base systems
 #####
+
 # All debian-based systems will use this as the base image. Does not install anything specific to the package being built,
 # just generic tooling. Needs built once per image
 deb-setup:
@@ -94,7 +90,6 @@ arch-deps:
 # Base layer for building packages supporting most linux distros
 ####
 builder:
-    FROM busybox
     # Docker file to build on
     ARG --required image
     # Package that we want to build against
@@ -183,18 +178,6 @@ SAVE:
     FUNCTION
     ARG --required image
     ARG artifacts = ""
-    RUN echo $BUILD_MODE
-    RUN env
-    IF [[ "$image" =~ "(debian:|ubuntu:|linuxmintd|kalilinux)" ]]
-        ENV BUILD_MODE=deb
-    ELSE IF [[ "$image" =~ "(centos:|rockylinux:|fedora:|amazonlinux:)" ]]
-        ENV BUILD_MODE=rpm
-    ELSE IF [[ "$image" =~ "(archlinux:)" ]]
-        ENV BUILD_MODE=arch
-    ELSE
-        RUN echo "Unsupported Docker image provided. You may need to modify this Earthfile 👀" && exit 127
-    END
-
     IF [ "$BUILD_MODE" = "deb" ]
         SAVE ARTIFACT $artifacts*_amd64.deb AS LOCAL build/$image/
     ELSE IF [ "$BUILD_MODE" = "rpm" ]
