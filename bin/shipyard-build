@@ -176,16 +176,26 @@ class cli:
             with EZ(f[0]) as z:
                 # Find the highest numbered patch file
                 last = -1
+                spec_format = ""
                 for i in z.contents.splitlines():
                     if i.startswith("Patch"):
                         i = i.split(":")[0]
                         i = i[len("Patch"):]
                         if i.isnumeric():
                             last = max(int(i), last)
-                
+                    if i.startswith("%patch"):
+                        spec_format = i
+                # Register the patch file
                 if last > 0:
                     new = f"Patch{last+1}: {pkg.OriginalName}.patch"
                     z.reinsert(re.compile(f"Patch{last}:.+\\n"), new)
+                    # Tell prep to apply the patch
+                    if '-P ' in spec_format:
+                        # New spec format '%patch -P 111 -p1'
+                        z.reinsert(re.compile(f"%patch.*{last}.*\\n"), f"%patch -P {last+1} -p1")
+                    else:
+                        # Legacy spec format '%patch111 -p1'
+                        z.reinsert(re.compile(f"%patch.*{last}.*\\n"), f"%patch{last+1} -p1")
                     print(f"[*] Added {new} to {f[0]}")
                 else:
                     raise ValueError("Could not find any Patches in the spec file")

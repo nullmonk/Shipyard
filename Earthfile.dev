@@ -122,11 +122,11 @@ build:
     END
 
     # Install shipyard from source for most projects
-    RUN pip install git+https://github.com/micahjmartin/Shipyard@develop
+    #RUN pip install git+https://github.com/micahjmartin/Shipyard@develop
     
     # For development, uncomment the above lines and use this
-    #COPY . /opt/install
-    #RUN python3 -m pip install /opt/install
+    COPY . /opt/install
+    RUN python3 -m pip install /opt/install
 
     RUN echo "[SHIPYARD] Initiating build of $package on $source ... patchfile=$patchfile shipfile=$shipfile" | tee /tmp/build.log
     IF [ "$patchfile" != "" ]
