@@ -94,6 +94,7 @@ builder:
     ARG --required image
     # Package that we want to build against
     ARG --required package
+    ENV BUILD_IMAGE=$image
     IF [[ "$image" =~ "(debian:|ubuntu:|linuxmintd|kalilinux)" ]]
         FROM +deb-deps
         ENV BUILD_MODE=deb
@@ -118,8 +119,6 @@ builder:
 
 BUILD:
     FUNCTION
-    # Docker file to build on
-    ARG --required image
     # Package that we want to build against
     ARG --required package
     
@@ -128,7 +127,7 @@ BUILD:
     # Set to "true" to save the image. Useful for debugging
     ARG export = ""
 
-    RUN echo "[SHIPYARD] Initiating build of" ${package} "on" $image .. patchfile=$patchfile shipfile=$shipfile | tee /tmp/build.log
+    RUN echo "[SHIPYARD] Initiating build of" ${package} "on" .. patchfile=$patchfile shipfile=$shipfile | tee /tmp/build.log
     
     # Shipfile should be a directory with a shipfile and patches
     COPY $patch /tmp/shipyard/
@@ -176,8 +175,8 @@ BUILD:
 
 SAVE:
     FUNCTION
-    ARG --required image
     ARG artifacts = ""
+    ARG image = ""
     IF [ "$BUILD_MODE" = "deb" ]
         SAVE ARTIFACT $artifacts*_amd64.deb AS LOCAL build/$image/
     ELSE IF [ "$BUILD_MODE" = "rpm" ]
@@ -197,5 +196,5 @@ build:
     ARG export = ""
 
     ARG artifacts = $package
-    DO +BUILD --image=$image --package=$package --patch=$patch
-    DO +SAVE --image=$image --artifacts=$package
+    DO +BUILD --package=$package --patch=$patch
+    DO +SAVE --artifacts=$package --image=$image
