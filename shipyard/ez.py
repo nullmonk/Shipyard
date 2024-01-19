@@ -29,7 +29,7 @@ class EZ:
         will occur. If err is defined, and the string cannot be found, 'err' will be raise as a LookupError with err templated with k and v"""
         if not isinstance(err, str):
             err = "failed to replace '{k}' with '{v}'. Not found"
-        if isinstance(k, re.Pattern):
+        if isinstance(k, type(re.compile('.'))):
             if count <= 0:
                 count = 0 # Count must be 0 for re and -1 for string
             self.contents, count = k.subn(v, self.contents, count=count)
