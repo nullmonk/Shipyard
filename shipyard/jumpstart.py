@@ -19,7 +19,7 @@ def jumpstart(dest: str, urls: List[str]):
     # get the versions in the repo
     res = subprocess.run(
         ["git", "--no-pager", "tag", "-l", ],
-        capture_output=True,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         cwd=dest,
         encoding="utf-8"
     )
@@ -33,14 +33,14 @@ def jumpstart(dest: str, urls: List[str]):
         download_version(url, version, fmt, dest)
 
 def commit(dest, msg, version=None):
-    r = subprocess.run(f'git add -Av', shell=True, cwd=dest, capture_output=True, encoding="utf-8")
+    r = subprocess.run(f'git add -Av', shell=True, cwd=dest, stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding="utf-8")
     if r.returncode != 0:
         raise ValueError("git-add: "+r.stderr+r.stdout)
-    r = subprocess.run(f'git commit -m "{msg}"', shell=True, cwd=dest, capture_output=True, encoding="utf-8")
+    r = subprocess.run(f'git commit -m "{msg}"', shell=True, cwd=dest, stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding="utf-8")
     if r.returncode != 0:
         raise ValueError("git-commit: "+r.stderr+r.stdout)
     if version:
-        r = subprocess.run(['git', "tag", "-a", version, "-m", msg], cwd=dest, capture_output=True, encoding="utf-8")
+        r = subprocess.run(['git', "tag", "-a", version, "-m", msg], cwd=dest, stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding="utf-8")
         if r.returncode != 0:
             raise ValueError("git-tag: "+r.stderr+r.stdout)
 
@@ -82,7 +82,7 @@ def download_version(url: str, version: str, fmt: str, dest: str):
     3. Commit the stuff, tag it
     """
     # Check if we have unstaged changes, if so, add them to a commit
-    r = subprocess.run("git diff", cwd=dest, shell=True, capture_output=True)
+    r = subprocess.run("git diff", cwd=dest, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if len(r.stdout.splitlines()) > 0:
         print(f"[!] Unstaged changes exist in {dest}. Refusing to delete")
         print(r.stdout)

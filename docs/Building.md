@@ -36,14 +36,20 @@ shipyard export v1.0 >> package.patch
 
 Run the build job:
 ```bash
-shipyard +build --source ubuntu:latest --package openssh-server --patchfile package.patch
+earthly +build --source ubuntu:latest --package openssh-server --patchfile package.patch
+```
+
+Run a build job with a shipfile (and auto version control). If your shipfile requires patches, pass the directory containing the shipfile and patches. If your shipfile only uses codepatches, you may pass just the shipfile
+```
+earthly +build --source ubuntu:latest --package openssh-server --shipfile openssh/
+earthly +build --source ubuntu:latest --package openssh-server --shipfile openssh/Shipfile.py
 ```
 
 
 ## Troubleshooting the Build
 When there are errors in the build process, you may hop into the container to check it out. Run the build job with exporting enabled:
 ```bash
-shipyard +build --source ubuntu:latest --package openssh-server --patchfile package.patch --export true
+earthly +build --source ubuntu:latest --package openssh-server --patchfile package.patch --export true
 ```
 
 Launch a shell in the container

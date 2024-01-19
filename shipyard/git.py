@@ -26,7 +26,7 @@ class GitMgr(SourceManager):
         """Return the current version"""
         res = subprocess.run(
             ["git", "describe", "--tags"],
-            capture_output=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             cwd=self.r.Directory,
             encoding="utf-8"
         )
@@ -35,7 +35,7 @@ class GitMgr(SourceManager):
     def versions(self) -> List[str]:
         res = subprocess.run(
             ["git", "--no-pager", "tag", "-l", self.r.VersionTags],
-            capture_output=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             cwd=self.r.Directory,
             encoding="utf-8"
         )
@@ -60,7 +60,7 @@ class GitMgr(SourceManager):
         res = subprocess.run(
             f"git checkout tags/{tag}",
             shell=True,
-            capture_output=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             cwd=self.r.Directory,
             encoding="utf-8"
         )
@@ -74,7 +74,7 @@ class GitMgr(SourceManager):
             args.insert(2, "--reject")
         res = subprocess.run(
             args,
-            capture_output=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             cwd=self.r.Directory,
             input=patch.dump(),
             encoding="utf-8"
@@ -93,7 +93,7 @@ class GitMgr(SourceManager):
             args.append(patch.Index)
         res = subprocess.run(
             args,
-            capture_output=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             cwd=self.r.Directory,
             encoding="utf-8"
         )
@@ -106,7 +106,7 @@ class GitMgr(SourceManager):
         res = subprocess.run(
             f"git checkout .",
             shell=True,
-            capture_output=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             cwd=self.r.Directory,
             encoding="utf-8"
         )
@@ -116,7 +116,7 @@ class GitMgr(SourceManager):
         res = subprocess.run(
             f"git clean -fdx",
             shell=True,
-            capture_output=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             cwd=self.r.Directory,
             encoding="utf-8"
         )
