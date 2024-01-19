@@ -39,7 +39,8 @@ class cli:
         """
         try:
             new_project(self.dir, url, name)
-            self._load()
+            p = self._load()
+            p.source.prepare() # Clone the source
         except Exception as e:
             print(e, file=sys.stderr)
             exit(127)

@@ -16,14 +16,18 @@ class GitMgr(SourceManager):
         """
         self.r = repo
         repo.Directory = repo.resolve_source_directory()
-        if not os.path.exists(repo.Directory):
-            print(f"[*] Cloning {repo.Url} {repo.Directory}")
-            res = subprocess.run(f"git clone {repo.Url} {repo.Directory}", shell=True, encoding="utf-8")
+    
+    def prepare(self):
+        """Ensure we have the source code when we need it"""
+        if not os.path.exists(self.r.Directory):
+            print(f"[*] Cloning {self.r.Url} {self.r.Directory}")
+            res = subprocess.run(f"git clone {self.r.Url} {self.r.Directory}", shell=True, encoding="utf-8")
             if res.returncode != 0:
                 raise ValueError(res.stderr)
     
     def version(self) -> str:
         """Return the current version"""
+        self.prepare()
         res = subprocess.run(
             ["git", "describe", "--tags"],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -33,6 +37,7 @@ class GitMgr(SourceManager):
         return res.stdout.strip()
 
     def versions(self) -> List[str]:
+        self.prepare()
         res = subprocess.run(
             ["git", "--no-pager", "tag", "-l", self.r.VersionTags],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -55,6 +60,7 @@ class GitMgr(SourceManager):
         """Make sure we have the correct version of the code sitting at
         self.r.Directory after this function is called. In our case its a git-checkout
         in other scenarios it might be a wget/etc"""
+        self.prepare()
         tag = self.r.version_to_tag(version)
         
         res = subprocess.run(
@@ -69,6 +75,7 @@ class GitMgr(SourceManager):
 
     def apply(self, patch: PatchFile, reject=True, check=False):
         #rel = os.path.relpath(patch.Filename, self.r.Directory)
+        self.prepare()
         args = ["git", "apply","-v", "--recount"]
         if reject:
             args.insert(2, "--reject")
@@ -88,6 +95,7 @@ class GitMgr(SourceManager):
     
     def refresh(self, patch: PatchFile = None):
         """Refresh a patch file and save it to outdir"""
+        self.prepare()
         args = ["git", "--no-pager", "diff", ]
         if patch:
             args.append(patch.Index)
@@ -103,6 +111,7 @@ class GitMgr(SourceManager):
         return res.stdout
 
     def reset(self):
+        self.prepare()
         res = subprocess.run(
             f"git checkout .",
             shell=True,

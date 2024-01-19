@@ -37,9 +37,20 @@ rhel-setup:
     ARG --required source
     FROM $source
     RUN yum update -y && yum install -y gcc rpmdevtools yum-utils make nc vim python3 python3-pip git
-    RUN [[ "$source" =~ "rockylinux:" ]] && (dnf install -y epel-release dnf-plugins-core && \
-        dnf config-manager --set-enabled powertools && \
-        dnf update) || echo "Skipping Powertools and EPEL install"
+
+    # Rocky linux doesnt have core libraries in their repo :vomit:
+    IF [[ "$source" = "rockylinux:8" ]]
+        RUN echo "rocky:8: Enabling Powertools" && dnf install -y epel-release dnf-plugins-core && \
+            dnf config-manager --set-enabled powertools && \
+            dnf update -y
+    ELSE IF [[ "$source" = "rockylinux:9" ]]
+        RUN echo "rocky:9: Enabling CRB" && dnf install -y epel-release dnf-plugins-core && \
+            dnf config-manager --set-enabled crb && \
+            dnf update -y
+    END
+
+    # Old versions of rocky/cent use python 3.6 which doesnt have dataclasses by default.
+    # This command will error on new python so we just ignore the error
     RUN python3 -m pip install dataclasses || echo "Skipping Dataclass installation"
 
 rhel-deps:

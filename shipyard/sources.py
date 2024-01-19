@@ -65,6 +65,10 @@ class SourceManager:
     """An object that makes sure the source code is in the right place at the right
     time. Currently we are only using git but we could extend this here if there was
     type needed"""
+    def prepare(self):
+        """Ensure we have the source code when we need it"""
+        raise NotImplementedError()
+
     def version(self) -> str:
         """Return the current version of the source code"""
         raise NotImplementedError()

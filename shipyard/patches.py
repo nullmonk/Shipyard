@@ -2,10 +2,13 @@ import inspect
 import glob
 import re
 import fnmatch
+import subprocess
+import shutil
 
 from os import path, walk, makedirs
 from collections import defaultdict
 from typing import List
+from distutils.dir_util import copy_tree
 
 from shipyard.patch import PatchFile
 from shipyard.utils import _load_object, getClosestVersions
@@ -31,7 +34,8 @@ class Patches:
             jumpstart(self.infoObject.resolve_source_directory(), self.infoObject.Urls)
         # If we wanted, we could use a different source manager here
         self.source:SourceManager = GitMgr(self.infoObject)
-        self._ver = self.infoObject.tag_to_version(self.source.version())
+        #self._ver = self.infoObject.tag_to_version(self.source.version())
+        self._ver = ""
 
     def _checkout(self, version):
         """Checkout a version"""
@@ -80,7 +84,7 @@ class Patches:
             if not self.versions[version]:
                 del self.versions[version]
     
-    def get_file_list(self) -> List[str]:
+    def get_file_list(self, base_dir="") -> List[str]:
         """List files, honoring the .gitignore
         
         https://stackoverflow.com/questions/70745060/how-to-list-directory-files-excluding-files-in-gitignore
@@ -88,21 +92,25 @@ class Patches:
         """
         self._files = []
         ignored = [".git"]
-        if path.isfile(".gitignore"):
-            with open(".gitignore") as f:
+        if not base_dir:
+            base_dir = self.infoObject.resolve_source_directory()
+        if path.isfile(path.join(base_dir, ".gitignore")):
+            with open(path.join(base_dir, ".gitignore")) as f:
                 ignored += [line for line in f.read().splitlines() if line]
-        for root, dirs, files in walk(self.infoObject.resolve_source_directory()):
-            if any(fnmatch.fnmatch(root, i) for i in ignored):
+
+        for root, dirs, files in walk(base_dir):
+            r = path.relpath(root, base_dir)
+            if any(fnmatch.fnmatch(r, i) for i in ignored):
                 dirs[:] = []
                 continue
             _, d = path.split(root)
-            if d in ignored or any(fnmatch.fnmatch(d, i) for i in ignored):
+            if d in ignored or d+"/" in ignored or any(fnmatch.fnmatch(d, i) for i in ignored):
                 dirs[:] = []
                 continue
             for f in files:
                 if f in ignored:
                     continue
-                f = path.join(root, f)
+                f = path.join(base_dir, f)
                 ign = any(fnmatch.fnmatch(f, i) for i in ignored)
                 if not ign:
                     self._files.append(f)
@@ -144,9 +152,16 @@ class Patches:
         
         # Will return empty list if we dont have any other version patches
         closestVers = getClosestVersions(version, self.versions.keys())
+        # Always use ourself first
         if version in self.versions:
             closestVers = [version] + closestVers
-        patches = self.versions.get(closestVers[0], [])
+        # Find the closest version WITH patches
+        patches = []
+        for v in closestVers:
+            p = self.versions.get(v)
+            if p:
+                patches = p
+                break
         if not patches:
             print(f"[!] WARNING: No patchfiles found for version '{closestVers[0]}'")
         else:
@@ -201,12 +216,18 @@ class Patches:
                     print(f"[!] FAIL {v}: {e}")
     
     def apply_code_patches(self, patches=[]):
+        for funcs in self.code_res.values():
+            # Reset the run check
+            for f in funcs:
+                setattr(f, "__patch_has_run", False)
         cfs = set()
+        files = set()
         for f in self._files:
             cf = self.__run_patches_on_file(f, patches=patches)
             if cf:
                 cfs.update(cf)
-        return cfs
+                files.add(f)
+        return cfs, files
 
     def _check_codepatches(self):
         """Ensure that all required codepatches have run"""
@@ -220,7 +241,7 @@ class Patches:
         can_run_on = set()
         r: re.Pattern
         for r, funcs in self.code_res.items():
-            if r.match(file):
+            if r.fullmatch(file):
                 for f in funcs:
                     if patches and f.__name__ not in patches:
                         continue # This patch is not in the given subset, skip it
@@ -286,6 +307,47 @@ class Patches:
             new_patch = new_patch.replace(k, v)
         return new_patch, patches
     
+    def export_from(self, directory):
+        """Apply code patches to an arbitrary directory and return the result"""
+
+        # Copy base as a working dir
+        if not path.isdir(directory):
+            raise ValueError(f"Not a valid directory: {directory}")
+        
+        # Make a new working directory for us
+        seconddir = directory.rstrip("/") + "-shipyard"
+        copy_tree(directory, seconddir)
+
+        # Generate a file list for the code_patches command
+        self.get_file_list(seconddir)
+        cfs, files = self.apply_code_patches()
+        self._check_codepatches() # Ensure all required codepatches have run
+
+        patch = ""
+
+        prefix = path.commonpath([directory, seconddir])
+        for f in files:
+            f = path.relpath(f, seconddir) # Name of the file eg "kex.c" not "openssh/kex.c"
+            fa = path.relpath(path.join(directory, f), prefix)
+            fb = path.relpath(path.join(seconddir, f), prefix)
+            # Diff the results
+            args = ["git", "--no-pager", "diff", "--no-prefix", fa, fb]
+            res = subprocess.run(
+                args,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                encoding="utf-8",
+                cwd=prefix
+            )
+            # https://git-scm.com/docs/git-diff#Documentation/git-diff.txt-emgitdiffemltoptionsgt--no-index--ltpathgtltpathgt
+            # https://git-scm.com/docs/git-diff#Documentation/git-diff.txt---exit-code
+            # 0 means no changes, 1 means changes
+            if res.stderr:
+                raise ValueError(f"command failed to run: {' '.join(args)}: '{res.stderr}'")
+            print(args)
+            patch += res.stdout
+        shutil.rmtree(seconddir)
+        return patch
+
     def dump(self):
         print("patches versions:", list(self.versions.keys()))
         print("\npatches:", list(self.patches.keys()))

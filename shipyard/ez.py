@@ -28,19 +28,19 @@ class EZ:
         """Replace k with v in the string. If k is a re.Pattern, it will be searched. If not, a simple string replacement
         will occur. If err is defined, and the string cannot be found, 'err' will be raise as a LookupError with err templated with k and v"""
         if not isinstance(err, str):
-            err = "failed to replace '{k}' with '{v}'. Not found"
+            err = "failed to replace '{k}' with '{v}' in '{file}'. Not found"
         if isinstance(k, type(re.compile('.'))):
             if count <= 0:
                 count = 0 # Count must be 0 for re and -1 for string
             self.contents, count = k.subn(v, self.contents, count=count)
             if count < 1:
                 if err:
-                    raise LookupError(err.format(k=k, v=v))
+                    raise LookupError(err.format(k=k, v=v, file=self.name))
                 return False
             return True
         if k not in self.contents:
             if err:
-                raise LookupError(err.format(k=k, v=v))
+                raise LookupError(err.format(k=k, v=v, file=self.name))
             return False
         if count <= 0:
             count = -1 # Count must be 0 for re and -1 for string
@@ -60,8 +60,8 @@ class EZ:
         if not res:
             if err:
                 if not isinstance(err, str):
-                    err = "cannot find regex '{regex}"
-                raise LookupError(err.format(regex=regex))
+                    err = "cannot find regex '{regex}' in {file}"
+                raise LookupError(err.format(regex=regex, file=self.name))
             return False
         
         f = StringIO()

@@ -39,7 +39,7 @@ def run(folder, args, err="", **kwargs):
         raise ValueError(f"{err}: {res.stdout}\n{res.stderr}")
     return res
 
-def GeneratePatch(shipcontext, pkg: Pkg) -> str:
+def GeneratePatch(shipcontext, pkg: Pkg, mode="") -> str:
     """Generate a patch using shipyard
     shipcontext can either be file, dir, or zipfile
 
@@ -52,10 +52,20 @@ def GeneratePatch(shipcontext, pkg: Pkg) -> str:
         p = Patches(shipcontext)
     elif os.path.isfile(shipcontext):
         #TODO: Check if its a zip file here or maybe have shipyard handle that part?
-        print("build was given a file: " + shipcontext)
         pth, _ = os.path.split(shipcontext)
         p = Patches(pth)
     
+    # Only code patches are here, this makes patching very nice for us
+    if not p.versions:
+        p._ver = pkg.Version
+        print("[*] This shipfile contains only codepatches. Running against prepared source!")
+        if mode == "deb":
+            with open(os.path.join(pkg.Folder, ".gitignore"), 'a') as f:
+                f.write(".pc/\n.pc/*\n") # add the .pc directory to the gitignore bc it contains a copy of all the source
+        return p.export_from(pkg.Folder)
+    
+    p.source.prepare()
+
     # If the version isnt an exact match, try to find the closest
     if pkg.Version not in p.source.versions():
         for v in p.source.versions():
@@ -127,7 +137,7 @@ class cli:
         """Generate a patch for the current app version using the given shipfile"""
         pkg = self._get_pkg(package)
         # Use shipyard to generate a patchfile now for this version
-        patch = GeneratePatch(shipcontext, pkg)
+        patch = GeneratePatch(shipcontext, pkg, mode=self.mode)
         if not patch:
             raise ValueError("Could not export patch!")
         with open(patchfile, "w") as f:
@@ -148,7 +158,7 @@ class cli:
             print(res.stdout)
             return
         if self.mode == "rpm":
-            # A tad more complicated than just a quilt import. Read teh SPEC file and add a patch
+            # A tad more complicated than just a quilt import. Read the SPEC file and add a patch
             # Find the spec file
             f = glob.glob("SPECS/*.spec")
             if not f:
@@ -158,9 +168,11 @@ class cli:
             print(f"[*] copying {pkg.Folder} to {pkg.Folder}-new")
             copy_tree(pkg.Folder, pkg.Folder + "-new")
             print(f"[*] Applying patch file to {pkg.Folder}-new")
-            res = run(pkg.Folder + "-new", ["patch", "-p1", "-f", "-i", patchfile], "Error importing quilt patch")
-            print(res.stdout)
-            print("[*] Adding patch to spec file")
+            res = run(pkg.Folder + "-new", ["patch", "-p1", "-f", "-i", patchfile], "Error importing patch")
+            with open(patchfile) as p:
+                with open(f"SOURCES/{pkg.OriginalName}.patch", "w") as newpatch:
+                    newpatch.write(p.read())
+            print(f"[*] Copied {patchfile} -> SOURCES/{pkg.OriginalName}.patch")
             with EZ(f[0]) as z:
                 # Find the highest numbered patch file
                 last = -1
@@ -203,7 +215,7 @@ class cli:
                 print("[!] No SPEC file laying around!. Exiting")
                 exit(127)
             res = subprocess.run(
-                ["rpmbuild", "--nocheck", "-bb", f[0]],
+                ["rpmbuild", "--define", "debug_package %{nil}", "--nocheck", "-bb", f[0]],
                 stdout=sys.stdout,
                 stderr=sys.stderr,
                 encoding="utf-8",
