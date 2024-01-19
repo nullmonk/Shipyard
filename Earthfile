@@ -44,7 +44,6 @@ rhel-deps:
     WORKDIR /tmp/build
     # TODO: Package installs here
     RUN yum-builddep -y $package && \
-        python3 -m pip install dataclasses
     RUN useradd -m mockbuild && groupadd mock && \
         usermod -G wheel mockbuild && \
         echo "%wheel  ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers && \
@@ -165,7 +164,7 @@ build:
     END
         
     IF [ "$BUILD_MODE" = "deb" ]
-        SAVE ARTIFACT $artifacts*_amd64.deb AS LOCAL build/deb/
+        SAVE ARTIFACT $artifacts*_amd64.deb AS LOCAL build/$source/
     ELSE IF [ "$BUILD_MODE" = "rpm" ]
-        SAVE ARTIFACT RPMS/*/$artifacts*.rpm AS LOCAL build/rpm/
+        SAVE ARTIFACT RPMS/*/$artifacts*.rpm AS LOCAL build/$source/
     END

@@ -1,7 +1,5 @@
 from os import path
-from dataclasses import dataclass
 
-@dataclass
 class PatchFile:
     def __init__(self, contents="", filename=""):
         self.Name = ""
