@@ -326,10 +326,13 @@ class Patches:
         patch = ""
 
         prefix = path.commonpath([directory, seconddir])
+        if not prefix:
+            prefix = "."
         for f in files:
             f = path.relpath(f, seconddir) # Name of the file eg "kex.c" not "openssh/kex.c"
             fa = path.relpath(path.join(directory, f), prefix)
             fb = path.relpath(path.join(seconddir, f), prefix)
+
             # Diff the results
             args = ["git", "--no-pager", "diff", "--no-prefix", fa, fb]
             res = subprocess.run(
@@ -343,7 +346,6 @@ class Patches:
             # 0 means no changes, 1 means changes
             if res.stderr:
                 raise ValueError(f"command failed to run: {' '.join(args)}: '{res.stderr}'")
-            print(args)
             patch += res.stdout
         shutil.rmtree(seconddir)
         return patch

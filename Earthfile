@@ -1,16 +1,21 @@
-VERSION 0.7
+VERSION --use-function-keyword 0.7
 FROM busybox
+
+
+test-base:
+    ARG --required image
+    FROM busybox
+    RUN echo Selecting busybox instead of $image
 
 #####
 # Debian base systems
 #####
-
 # All debian-based systems will use this as the base image. Does not install anything specific to the package being built,
-# just generic tooling. Needs built once per source
+# just generic tooling. Needs built once per image
 deb-setup:
-    ARG --required source
-    FROM $source
-    # Enable source repos and update
+    ARG --required image
+    FROM $image
+    # Enable image repos and update
     RUN sed -i 's/# deb-src/deb-src/' /etc/apt/sources.list && \
         apt-get update && \
         ln -fs /usr/share/zoneinfo/America/New_York /etc/localtime && \
@@ -34,16 +39,16 @@ deb-deps:
 # Redhat based systems go here
 #####
 rhel-setup:
-    ARG --required source
-    FROM $source
+    ARG --required image
+    FROM $image
     RUN yum update -y && yum install -y gcc rpmdevtools yum-utils make nc vim python3 python3-pip git
 
     # Rocky linux doesnt have core libraries in their repo :vomit:
-    IF [[ "$source" = "rockylinux:8" ]]
+    IF [[ "$image" = "rockylinux:8" ]]
         RUN echo "rocky:8: Enabling Powertools" && dnf install -y epel-release dnf-plugins-core && \
             dnf config-manager --set-enabled powertools && \
             dnf update -y
-    ELSE IF [[ "$source" = "rockylinux:9" ]]
+    ELSE IF [[ "$image" = "rockylinux:9" ]]
         RUN echo "rocky:9: Enabling CRB" && dnf install -y epel-release dnf-plugins-core && \
             dnf config-manager --set-enabled crb && \
             dnf update -y
@@ -73,8 +78,8 @@ rhel-deps:
 # Arch
 #####
 arch-setup:
-    ARG --required source
-    FROM $source
+    ARG --required image
+    FROM $image
     RUN sed -i 's:#ParallelDownloads:ParallelDownloads:' /etc/pacman.conf && \
         pacman -Syu --noconfirm python python-pip base-devel
     # TODO: Package installs here
@@ -86,66 +91,63 @@ arch-deps:
     RUN echo "Not Implemented" && exit 127
 
 ####
-# Generic build function. Uses shipyard under the hood to build patches
+# Base layer for building packages supporting most linux distros
 ####
-build:
+builder:
+    FROM busybox
     # Docker file to build on
-    ARG --required source
+    ARG --required image
     # Package that we want to build against
     ARG --required package
-    # Set to "true" to save the image. Useful for debugging
-    ARG export = ""
-    # If Specified, use this shipfile for generating patches
-    ARG shipfile
-    # Patchfile that we want to use
-    ARG patchfile
-    
-    # Enfore we have ONE of the two args
-    IF [ "$patchfile" = "" ] && [ "$shipfile" = "" ]
-        RUN echo "--patchfile or --shipfile must be passed to Earthly" && exit 127
-    END
-
-    IF [[ "$export" =~ "([Tt]rue|[Yy]es)" ]]
-        ARG IMAGE_NAME = $package-builder:latest
-    END
-    IF [[ "$source" =~ "(debian:|ubuntu:|linuxmintd|kalilinux)" ]]
+    IF [[ "$image" =~ "(debian:|ubuntu:|linuxmintd|kalilinux)" ]]
         FROM +deb-deps
         ENV BUILD_MODE=deb
-    ELSE IF [[ "$source" =~ "(centos:|rockylinux:|fedora:|amazonlinux:)" ]]
+    ELSE IF [[ "$image" =~ "(centos:|rockylinux:|fedora:|amazonlinux:)" ]]
         FROM +rhel-deps
         ENV BUILD_MODE=rpm
-    ELSE IF [[ "$source" =~ "(archlinux:)" ]]
+    ELSE IF [[ "$image" =~ "(archlinux:)" ]]
         FROM +arch-setup
         ENV BUILD_MODE=arch
     ELSE
         RUN echo "Unsupported Docker image provided. You may need to modify this Earthfile 👀" && exit 127
     END
 
-    # Install shipyard from source for most projects
-    RUN python3 -m pip install git+https://github.com/micahjmartin/Shipyard@develop
-    
-    # For development, uncomment the above lines and use this
-    #COPY . /opt/install
-    #RUN python3 -m pip install /opt/install
+    ARG dev = "false"
+    IF [ "$dev" = "" ]
+        # For development, uncomment the above lines and use this
+        COPY . /opt/install
+        RUN python3 -m pip install /opt/install
+    ELSE
+        RUN python3 -m pip install git+https://github.com/micahjmartin/Shipyard@develop
+    END
 
-    RUN echo "[SHIPYARD] Initiating build of $package on $source ... patchfile=$patchfile shipfile=$shipfile" | tee /tmp/build.log
-    IF [ "$patchfile" != "" ]
-        COPY $patchfile "/tmp/build/$package.patch"
-    # If we are given a shipfile and not a Patchfile, generate a patch using shipyard
-    ELSE IF [ "$shipfile" != "" ]
-        # Shipfile should be a directory with a shipfile and patches
-        COPY $shipfile /tmp/shipyard/
-        # Save here just incase shipyard errors
-        RUN (shipyard-build gen /tmp/shipyard "/tmp/build/$package.patch" --package $package || touch /tmp/error) 2>&1 | tee -a /tmp/build.log
-        IF [ -f "/tmp/error" ]
-            WAIT
-                SAVE ARTIFACT /tmp/build.log AS LOCAL logs/
-                IF [ "$IMAGE_NAME" != "" ]
-                    SAVE IMAGE $IMAGE_NAME
-                END
+BUILD:
+    FUNCTION
+    # Docker file to build on
+    ARG --required image
+    # Package that we want to build against
+    ARG --required package
+    
+    # Patch can be one of the following: patchfile, shipfile, dir with shipfile
+    ARG --required patch
+    # Set to "true" to save the image. Useful for debugging
+    ARG export = ""
+
+    RUN echo "[SHIPYARD] Initiating build of" ${package} "on" $image .. patchfile=$patchfile shipfile=$shipfile | tee /tmp/build.log
+    
+    # Shipfile should be a directory with a shipfile and patches
+    COPY $patch /tmp/shipyard/
+    # Save here just incase shipyard errors
+    RUN echo [$patch] [$PWD] [`ls`] [`ls /tmp/shipyard/`]
+    RUN (shipyard-build gen /tmp/shipyard "/tmp/build/$package.patch" --package $package || touch /tmp/error) 2>&1 | tee -a /tmp/build.log
+    IF [ -f "/tmp/error" ]
+        WAIT
+            SAVE ARTIFACT /tmp/build.log AS LOCAL logs/
+            IF [ "$IMAGE_NAME" != "" ]
+                SAVE IMAGE $IMAGE_NAME
             END
-            RUN echo "failed to generate patch" && exit 127
         END
+        RUN echo "failed to generate patch" && exit 127
     END
 
     # Now apply the patches
@@ -177,9 +179,40 @@ build:
         SAVE IMAGE $IMAGE_NAME
     END
 
-    ARG artifacts = $package # Artifacts to extract
-    IF [ "$BUILD_MODE" = "deb" ]
-        SAVE ARTIFACT $artifacts*_amd64.deb AS LOCAL build/$source/
-    ELSE IF [ "$BUILD_MODE" = "rpm" ]
-        SAVE ARTIFACT RPMS/*/$artifacts*.rpm AS LOCAL build/$source/
+SAVE:
+    FUNCTION
+    ARG --required image
+    ARG artifacts = ""
+    RUN echo $BUILD_MODE
+    RUN env
+    IF [[ "$image" =~ "(debian:|ubuntu:|linuxmintd|kalilinux)" ]]
+        ENV BUILD_MODE=deb
+    ELSE IF [[ "$image" =~ "(centos:|rockylinux:|fedora:|amazonlinux:)" ]]
+        ENV BUILD_MODE=rpm
+    ELSE IF [[ "$image" =~ "(archlinux:)" ]]
+        ENV BUILD_MODE=arch
+    ELSE
+        RUN echo "Unsupported Docker image provided. You may need to modify this Earthfile 👀" && exit 127
     END
+
+    IF [ "$BUILD_MODE" = "deb" ]
+        SAVE ARTIFACT $artifacts*_amd64.deb AS LOCAL build/$image/
+    ELSE IF [ "$BUILD_MODE" = "rpm" ]
+        SAVE ARTIFACT RPMS/*/$artifacts*.rpm AS LOCAL build/$image/
+    END
+
+build:
+    # Docker file to build on
+    ARG --required image
+    # Package that we want to build against
+    ARG --required package
+    FROM +builder
+    
+    # Patch can be one of the following: patchfile, shipfile, dir with shipfile
+    ARG --required patch
+    # Set to "true" to save the image. Useful for debugging
+    ARG export = ""
+
+    ARG artifacts = $package
+    DO +BUILD --image=$image --package=$package --patch=$patch
+    DO +SAVE --image=$image --artifacts=$package

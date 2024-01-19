@@ -47,18 +47,11 @@ def GeneratePatch(shipcontext, pkg: Pkg, mode="") -> str:
     if its a zip, unzip it and use that dir as the new shipcontext
     if its a file, thats the shipfile
     """
-    if os.path.isdir(shipcontext):
-        print("build was given a directory. contents:", os.listdir(shipcontext))
-        p = Patches(shipcontext)
-    elif os.path.isfile(shipcontext):
-        #TODO: Check if its a zip file here or maybe have shipyard handle that part?
-        pth, _ = os.path.split(shipcontext)
-        p = Patches(pth)
-    
+    p = Patches(shipcontext)
     # Only code patches are here, this makes patching very nice for us
     if not p.versions:
         p._ver = pkg.Version
-        print("[*] This shipfile contains only codepatches. Running against prepared source!")
+        print("[*] This shipfile contains only codepatches. Running against prepared source (This is a good thing)")
         if mode == "deb":
             with open(os.path.join(pkg.Folder, ".gitignore"), 'a') as f:
                 f.write(".pc/\n.pc/*\n") # add the .pc directory to the gitignore bc it contains a copy of all the source
@@ -76,8 +69,6 @@ def GeneratePatch(shipcontext, pkg: Pkg, mode="") -> str:
     p.load() # refresh the patches that we know about
     patch, _ = p.export(pkg.Version)
     return patch
-
-
 
 # TODO: SUPPORTED_MODES = ["arch", "deb", "rpm"]
 SUPPORTED_MODES = ["deb", "rpm"]
@@ -135,6 +126,35 @@ class cli:
 
     def gen(self, shipcontext, patchfile, package=""):
         """Generate a patch for the current app version using the given shipfile"""
+        patches = []
+        ctx = ""
+        # Make sure we have either patches, or a shipfile. They can all be in one directory
+        if os.path.isdir(shipcontext):
+            files = os.listdir(shipcontext)
+            if "shipfile.py" in files:
+                ctx = shipcontext
+            else:
+                patches = [i for i in files if i.endswith(".patch") or i.endswith(".diff")]
+        else:
+            if shipcontext.endswith(".patch") or shipcontext.endswith(".diff"):
+                patches.append(shipcontext)
+            elif shipcontext == "shipfile.py":
+                ctx, _ = os.path.split(shipcontext)
+
+        if not ctx:
+            if not patches:
+                print("[!] Error: No shipfile or patchfiles given. Refusing to build")
+                quit(1)
+            # Concat all the patchfiles we are given into a big patchfile
+            print(f"[*] Saving patchfiles to {patchfile}: {patches}")
+            with open(patchfile, "w") as f:
+                for f in patches:
+                    with open(f) as p:
+                        f.write(p.read())
+                        f.write("\n")
+            quit()
+
+        # Use shipyard to generate a patch
         pkg = self._get_pkg(package)
         # Use shipyard to generate a patchfile now for this version
         patch = GeneratePatch(shipcontext, pkg, mode=self.mode)
