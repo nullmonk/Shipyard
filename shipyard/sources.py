@@ -7,10 +7,12 @@ import shutil
 import inspect
 
 from typing import List
+from dataclasses import dataclass
 
 from shipyard.version import Version
 from shipyard.patch import PatchFile
 
+@dataclass
 class SourceProgram:
     """A source program is meta information about the project to patch. See the openssh
     program for implmentation.

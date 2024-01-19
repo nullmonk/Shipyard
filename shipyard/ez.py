@@ -54,9 +54,7 @@ class EZ:
     
     def reinsert(self, regex: "str | re.Pattern", lines=[], before=False, err=""):
         """Insert lines before or after the given regular expression"""
-        if not isinstance(regex, re.Pattern):
-            regex = re.compile(regex)
-        res = regex.search(self.contents)
+        res = re.search(regex, self.contents)
         if isinstance(lines, str):
             lines = [lines]
         if not res:
