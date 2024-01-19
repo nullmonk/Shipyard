@@ -122,7 +122,7 @@ build:
     END
 
     # Install shipyard from source for most projects
-    #RUN pip install git+https://github.com/micahjmartin/Shipyard@develop
+    #RUN python3 -m pip install git+https://github.com/micahjmartin/Shipyard@develop
     
     # For development, uncomment the above lines and use this
     COPY . /opt/install
