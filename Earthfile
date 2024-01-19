@@ -37,6 +37,10 @@ rhel-setup:
     ARG --required source
     FROM $source
     RUN yum update -y && yum install -y gcc rpmdevtools yum-utils make nc vim python3 python3-pip git
+    RUN [[ "$source" =~ "rockylinux:" ]] && (dnf install -y epel-release dnf-plugins-core && \
+        dnf config-manager --set-enabled powertools && \
+        dnf update) || echo "Skipping Powertools and EPEL install"
+    RUN python3 -m pip install dataclasses || echo "Skipping Dataclass installation"
 
 rhel-deps:
     FROM +rhel-setup
@@ -85,7 +89,6 @@ build:
     # Patchfile that we want to use
     ARG patchfile
     
-    ARG artifacts = $package # Artifacts to extract
     # Enfore we have ONE of the two args
     IF [ "$patchfile" = "" ] && [ "$shipfile" = "" ]
         RUN echo "--patchfile or --shipfile must be passed to Earthly" && exit 127
@@ -109,7 +112,7 @@ build:
 
     # Install shipyard from source for most projects
     #RUN pip install git+https://github.com/micahjmartin/Shipyard@develop
-
+    
     # For development, uncomment the above lines and use this
     COPY . /opt/install
     RUN python3 -m pip install /opt/install
@@ -162,7 +165,8 @@ build:
     IF [ "$IMAGE_NAME" != "" ]
         SAVE IMAGE $IMAGE_NAME
     END
-        
+
+    ARG artifacts = $package # Artifacts to extract
     IF [ "$BUILD_MODE" = "deb" ]
         SAVE ARTIFACT $artifacts*_amd64.deb AS LOCAL build/$source/
     ELSE IF [ "$BUILD_MODE" = "rpm" ]
