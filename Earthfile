@@ -110,7 +110,7 @@ builder:
     END
 
     ARG dev = "false"
-    IF [ "$dev" = "" ]
+    IF [ "$dev" != "false" ]
         # For development, uncomment the above lines and use this
         COPY . /opt/install
         RUN python3 -m pip install /opt/install
@@ -142,7 +142,6 @@ BUILD:
         END
         RUN echo "failed to generate patch" && exit 127
     END
-
     # Now apply the patches
     RUN (shipyard-build apply "/tmp/build/$package.patch" --package $package || touch /tmp/error) 2>&1 | tee -a /tmp/build.log
     IF [ -f "/tmp/error" ]
@@ -171,6 +170,8 @@ BUILD:
     IF [ "$IMAGE_NAME" != "" ]
         SAVE IMAGE $IMAGE_NAME
     END
+
+    SAVE ARTIFACT /tmp/build.log AS LOCAL logs/
 
 # Function for saving artifacts
 SAVE:

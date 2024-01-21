@@ -135,11 +135,14 @@ class cli:
                 ctx = shipcontext
             else:
                 patches = [i for i in files if i.endswith(".patch") or i.endswith(".diff")]
-        else:
+        elif os.path.isfile(shipcontext):
             if shipcontext.endswith(".patch") or shipcontext.endswith(".diff"):
                 patches.append(shipcontext)
             elif shipcontext == "shipfile.py":
                 ctx, _ = os.path.split(shipcontext)
+        else:
+            print("[!] Error: No shipfile or patchfiles given. Refusing to build")
+            quit(1)
 
         if not ctx:
             if not patches:
@@ -162,7 +165,7 @@ class cli:
             raise ValueError("Could not export patch!")
         with open(patchfile, "w") as f:
             f.write(patch)
-        print(f"[+] Patch saved to {patchfile} ({len(patch.splitlines())}  lines)")
+        print(f"[+] Patch for version {pkg.Version} saved to {patchfile} ({len(patch.splitlines())}  lines)")
 
     def apply(self, patchfile, package=""):
         """Apply a patchfile to the package"""
