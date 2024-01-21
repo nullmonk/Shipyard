@@ -21,7 +21,7 @@ deb-setup:
         apt-get build-dep -y openssh-server && \
         mkdir -p /tmp/build/
 
-# Install the deps for a specific package
+# Install the deps for a specific package to be built
 deb-deps:
     FROM +deb-setup
     ARG --required package
@@ -87,7 +87,8 @@ arch-deps:
     RUN echo "Not Implemented" && exit 127
 
 ####
-# Base layer for building packages supporting most linux distros
+# Base layer for building packages supporting most linux distros, use this layer as a FROM for
+# all your build needs
 ####
 builder:
     # Docker file to build on
@@ -117,22 +118,20 @@ builder:
         RUN python3 -m pip install git+https://github.com/micahjmartin/Shipyard@develop
     END
 
+# Function to perform an actual build
 BUILD:
     FUNCTION
     # Package that we want to build against
     ARG --required package
     
     # Patch can be one of the following: patchfile, shipfile, dir with shipfile
-    ARG --required patch
+    ARG patch = "/tmp/shipyard"
     # Set to "true" to save the image. Useful for debugging
     ARG export = ""
 
-    RUN echo "[SHIPYARD] Initiating build of" ${package} "on" .. patchfile=$patchfile shipfile=$shipfile | tee /tmp/build.log
+    RUN echo "[SHIPYARD] Initiating build of" ${package} "on" .. patchfile=$patchfile patch=$patch | tee /tmp/build.log
     
-    # Shipfile should be a directory with a shipfile and patches
-    COPY $patch /tmp/shipyard/
     # Save here just incase shipyard errors
-    RUN echo [$patch] [$PWD] [`ls`] [`ls /tmp/shipyard/`]
     RUN (shipyard-build gen /tmp/shipyard "/tmp/build/$package.patch" --package $package || touch /tmp/error) 2>&1 | tee -a /tmp/build.log
     IF [ -f "/tmp/error" ]
         WAIT
@@ -173,6 +172,7 @@ BUILD:
         SAVE IMAGE $IMAGE_NAME
     END
 
+# Function for saving artifacts
 SAVE:
     FUNCTION
     ARG artifacts = ""
@@ -183,6 +183,8 @@ SAVE:
         SAVE ARTIFACT RPMS/*/$artifacts*.rpm AS LOCAL build/$image/
     END
 
+# Target that wraps it all together
+# To be called by the user
 build:
     # Docker file to build on
     ARG --required image
@@ -193,8 +195,11 @@ build:
     # Patch can be one of the following: patchfile, shipfile, dir with shipfile
     ARG --required patch
     # Set to "true" to save the image. Useful for debugging
+
+    COPY $patch /tmp/shipyard/
+
     ARG export = ""
 
     ARG artifacts = $package
-    DO +BUILD --package=$package --patch=$patch
+    DO +BUILD --package=$package --patch=/tmp/shipyard
     DO +SAVE --artifacts=$package --image=$image
