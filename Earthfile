@@ -177,11 +177,11 @@ BUILD:
 SAVE:
     FUNCTION
     ARG artifacts = ""
-    ARG image = ""
+    ARG output = "build/"
     IF [ "$BUILD_MODE" = "deb" ]
-        SAVE ARTIFACT $artifacts*_amd64.deb AS LOCAL build/$image/
+        SAVE ARTIFACT $artifacts*_amd64.deb AS LOCAL $output
     ELSE IF [ "$BUILD_MODE" = "rpm" ]
-        SAVE ARTIFACT RPMS/*/$artifacts*.rpm AS LOCAL build/$image/
+        SAVE ARTIFACT RPMS/*/$artifacts*.rpm AS LOCAL $output
     END
 
 # Target that wraps it all together
