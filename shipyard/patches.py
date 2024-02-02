@@ -348,6 +348,10 @@ class Patches:
                 raise ValueError(f"command failed to run: {' '.join(args)}: '{res.stderr}'")
             patch += res.stdout
         shutil.rmtree(seconddir)
+        
+        # Sub all the vars
+        for k, v in self.infoObject.Variables.items():
+            patch = patch.replace(k, v)
         return patch
 
     def dump(self):
