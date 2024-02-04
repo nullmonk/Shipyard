@@ -2,8 +2,14 @@
 # (versions) and check them out accordingly
 
 import os
+import re
+import shutil
 import inspect
+
+from typing import List
 from dataclasses import dataclass
+
+from shipyard.version import Version
 from shipyard.patch import PatchFile
 
 @dataclass
@@ -20,20 +26,20 @@ class SourceProgram:
     Patches = "patches/"
     # Test using git tag -l 'PATTERN'
     VersionTags = "*" # A pattern to match for release version tags in the source
-    MinMajorVersion = 0 # Last major version we care about
+    Variables = {}
     IgnoredVersions = []
+    Urls = [] # Pass a list of urls instead of a git repo
 
     """If the version string is different than the git tag, do the conversions here"""
     version_to_tag = lambda _, s:s
     tag_to_version = lambda _, s:s
-    is_version_ignored = lambda _: False
-    _default_attributes = ("source_directory", "tag_to_version", "version_to_tag", "is_version_ignored", "VersionTags", "MinMajorVersion", "IgnoredVersions", "Directory", "Patches")
+    is_version_ignored = lambda *_: False
+    _default_attributes = ("Url", "source_directory", "tag_to_version", "version_to_tag", "is_version_ignored", "Urls", "VersionTags", "Patches", "Variables")
     
-    def __init__(self, name, url) -> None:
+    def __init__(self, name) -> None:
         self.source_directory = None
-        self.Name = name
-        self.Directory = self.Name
-        self.Url = url
+        self.Name = name # unused
+        self.Directory = self.Name # internal only
         self._filepath = ""
     
     def resolve_source_directory(self) -> str:
@@ -49,7 +55,7 @@ class SourceProgram:
     @classmethod
     def from_object(cls, obj):
         # convert our incoming object to a SourceProgram
-        o = cls(obj.Name, obj.Url)
+        o = cls(obj.Name)
         o._filepath = inspect.getfile(obj)
         for attr in o._default_attributes:
             setattr(o, attr, getattr(obj, attr, getattr(o, attr)))
@@ -59,7 +65,15 @@ class SourceManager:
     """An object that makes sure the source code is in the right place at the right
     time. Currently we are only using git but we could extend this here if there was
     type needed"""
-    def versions(self) -> list[str]:
+    def prepare(self):
+        """Ensure we have the source code when we need it"""
+        raise NotImplementedError()
+
+    def version(self) -> str:
+        """Return the current version of the source code"""
+        raise NotImplementedError()
+
+    def versions(self) -> List[str]:
         """Return all the versions of the source code that we have"""
         raise NotImplementedError()
 

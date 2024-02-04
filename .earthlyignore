@@ -1,12 +1,7 @@
-openssh-server/*
 *.pyc
-*.diff
-*.patch
-shipfile.py
 
 logs/*
 
-_site
 # Distribution / packaging
 .Python
 env/

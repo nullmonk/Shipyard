@@ -1,7 +1,5 @@
 from os import path
-from dataclasses import dataclass
 
-@dataclass
 class PatchFile:
     def __init__(self, contents="", filename=""):
         self.Name = ""
@@ -16,6 +14,13 @@ class PatchFile:
             self.Name, _ = path.splitext(fname)
         if contents:
             self.parse()
+    
+    def update(self, variables={}):
+        """Apply the variables to the patch"""
+        if not variables:
+            return
+        for k, v in variables.items():
+            self.contents = self.contents.replace(k, v)
     
     def parse(self):
         if not self.contents:
@@ -76,8 +81,11 @@ class PatchFile:
                 return True
         return None
     
-    def dump(self):
+    def dump(self, variables={}):
         desc = ""
         if self.Description:
             desc = self.Description+"\n"
-        return f"{desc}Index: {self.FullIndex}\n{'='*67}\n{self.contents}\n"
+        contents = self.contents
+        for k, v in variables.items():
+            contents = contents.replace(k, v)
+        return f"{desc}Index: {self.FullIndex}\n{'='*67}\n{contents}\n"

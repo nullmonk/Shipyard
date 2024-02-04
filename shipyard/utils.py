@@ -3,6 +3,9 @@ import sys
 import inspect
 
 from os import path
+from typing import List
+
+from shipyard.version import Version
 
 def _load_object(fil):
     """
@@ -21,7 +24,7 @@ def _load_object(fil):
             return m
 
 
-def getClosestVersions(version: str, versions: list[str]) -> str:
+def getClosestVersions(version: str, versions: List[Version]) -> str:
     """Get the versions closest to the passed in version, in order"""
     vs = set(versions)
     vs.add(version)
@@ -38,6 +41,8 @@ def getClosestVersions(version: str, versions: list[str]) -> str:
             nxt = vs[r]
             if nxt != version: newVersions.append(nxt)
             r+=1
+    if not newVersions:
+        return [version]
     return newVersions
 
 
@@ -48,3 +53,15 @@ def getMajor(s) -> int:
     if vs:
         return vs[0]
     return 0
+
+def getClosest():
+    v = [
+        "2.2.17",
+        "2.3.15",
+    ]
+    #v = [Version(i) for i in v]
+    closest = getClosestVersions("2.3.16", v)
+    print(closest)
+
+if __name__ == '__main__':
+    getClosest()

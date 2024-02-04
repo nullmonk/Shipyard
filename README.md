@@ -38,10 +38,13 @@ class Shipfile:
     VersionTags = "v*.*" # Change this to only look at release tags and ignore other versions
     
     @staticmethod
-    def is_version_ignored(version) -> bool:
+    def is_version_ignored(version: shipyard.Version) -> bool:
         """Do some basic version filtering"""
-        major = version.lstrip("v").split(".")[0]
-        if major.isnumeric() and int(major) >= 8:
+        if version > 8.1:
+            return False
+        if version == "6.5.3":
+            return False
+        if version = 9:
             return False
         return True
 ```
@@ -174,7 +177,11 @@ You may then export the patches to a single patchfile for use later
 shipyard export v9.4
 ```
 
-CodePatches will be included in the release patch
+CodePatches and Variables will be included in the release patch file.
+
+### Building the Package
+
+See [Building](./docs/Building.md) for more details.
 
 ## Examples
 Not many examples of repositories managed with Shipyard are open source, but [free-da](https://github.com/micahjmartin/free-da) is one that makes exclusive use of
