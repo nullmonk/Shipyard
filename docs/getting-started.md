@@ -3,6 +3,8 @@ title: Getting Started
 layout: home
 nav_order: 10
 ---
+## Getting Started
+{: .no_toc }
 <details open markdown="block">
   <summary>
     Table of contents
@@ -12,7 +14,6 @@ nav_order: 10
 {:toc}
 </details>
 
-## Getting Started
 
 {: .pink-title }
 > Before Starting
