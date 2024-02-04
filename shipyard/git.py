@@ -76,7 +76,7 @@ class GitMgr(SourceManager):
     def apply(self, patch: PatchFile, reject=True, check=False):
         #rel = os.path.relpath(patch.Filename, self.r.Directory)
         self.prepare()
-        args = ["git", "apply","-v", "--recount"]
+        args = ["git", "apply", "-v", "--recount"]
         if reject:
             args.insert(2, "--reject")
         res = subprocess.run(
@@ -94,7 +94,7 @@ class GitMgr(SourceManager):
         return True
     
     def refresh(self, patch: PatchFile = None):
-        """Refresh a patch file and save it to outdir"""
+        """Refresh a patch file and return the results"""
         self.prepare()
         args = ["git", "--no-pager", "diff", ]
         if patch:
