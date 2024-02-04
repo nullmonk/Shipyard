@@ -114,7 +114,7 @@ class Patches:
             for f in files:
                 if f in ignored:
                     continue
-                f = path.join(base_dir, f)
+                f = path.join(root, f)
                 ign = any(fnmatch.fnmatch(f, i) for i in ignored)
                 if not ign:
                     self._files.append(f)
