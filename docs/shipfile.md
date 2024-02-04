@@ -120,9 +120,7 @@ class Shipfile:
     
     @CodePatch(r".*main\.c")
     def test(file, version: Version):
-        """Add a hacker shell to sshd that can be accessed with netcat
-        
-        The shipyard.Version object is a special object that can be compared against a float, int,
+        """The shipyard.Version object is a special object that can be compared against a float, int,
         string, or list. Python uses lexicographical comparisons for lists of numbers, and the
         Version object handles these.
 
