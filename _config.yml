@@ -1,0 +1,38 @@
+title: Shipyard
+description: Working with Shipyard
+theme: just-the-docs
+
+url: https://micahjmartin.github.io/Shipyard
+logo: "/assets/img/logo_alt.png"
+
+heading_anchors: true
+aux_links_new_tab: true
+aux_links:
+  Source Code: https://github.com/micahjmartin/Shipyard
+
+
+callouts:
+  pink:
+    title: Note
+    color: pink
+  blue:
+    title: Note
+    color: blue
+
+mermaid:
+  #  version from https://cdn.jsdelivr.net/npm/mermaid/
+  version: "10.8.0"
+
+compress_html:
+  ignore:
+    envs: all
+
+kramdown:
+  input: GFM
+
+color_scheme: dark
+gh_edit_link: true
+gh_edit_link_text: "Edit this page on GitHub."
+gh_edit_repository: "https://github.com/micahjmartin/Shipyard"
+gh_edit_branch: "gh-pages"
+gh_edit_view_mode: "tree"
