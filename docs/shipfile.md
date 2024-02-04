@@ -4,6 +4,17 @@ layout: home
 nav_order: 2
 ---
 # Shipfile
+{: .no_toc }
+<details open markdown="block">
+  <summary>
+    Table of contents
+  </summary>
+  {: .text-delta }
+1. TOC
+{:toc}
+</details>
+
+
 A Shipfile is the workhorse of Shipyard. It controls how patches get applied, defines [CodePatches](./CodePatches.md), and defines metadata about the source. To generate a new
 shipfile for a source, run the following. The URL will be the path to the source repo
 

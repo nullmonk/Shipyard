@@ -5,6 +5,17 @@ nav_order: 1
 ---
 
 ## Installation
+{: .no_toc }
+<details open markdown="block">
+  <summary>
+    Table of contents
+  </summary>
+  {: .text-delta }
+1. TOC
+{:toc}
+</details>
+
+
 The easiest way to install Shipyard is by using pip and your package manager:
 ```bash
 pacman -S git

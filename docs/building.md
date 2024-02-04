@@ -3,8 +3,17 @@ title: Building
 layout: home
 nav_order: 20
 ---
-
 # Building
+{: .no_toc }
+<details open markdown="block">
+  <summary>
+    Table of contents
+  </summary>
+  {: .text-delta }
+1. TOC
+{:toc}
+</details>
+
 Despite shipyard primarily being used for generating patches, a tool `shipyard-build` is provided for building RPM and DEB packages with Shipyard. This system uses [Earthly](https://earthly.dev) and a single (albiet complicated) [Earthfile](../Earthfile) to allow easy building of packages using a single patch file or using a Shipfile.
 
 

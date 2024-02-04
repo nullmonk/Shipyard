@@ -4,6 +4,15 @@ layout: home
 nav_order: 3
 ---
 # CodePatches
+{: .no_toc }
+<details open markdown="block">
+  <summary>
+    Table of contents
+  </summary>
+  {: .text-delta }
+1. TOC
+{:toc}
+</details>
 
 ## Basics
 Patch files _suck_ to get right, a basic change in the code can ruin an entire Patch file. To combat this, Shipyard introduces `CodePatches`. CodePatches are simple functions that run on a file to make changes.
