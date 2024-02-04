@@ -47,7 +47,7 @@ def GeneratePatch(shipcontext, pkg: Pkg, mode="") -> str:
     if its a zip, unzip it and use that dir as the new shipcontext
     if its a file, thats the shipfile
     """
-    p = Patches(shipcontext)
+    p = Patches(shipcontext, pull=False)
     # Only code patches are here, this makes patching very nice for us
     if not p.versions:
         p._ver = pkg.Version

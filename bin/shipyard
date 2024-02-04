@@ -17,13 +17,19 @@ class cli:
         self.dir = directory
     
     def _load(self) -> Patches:
-        # TODO: Search up a level or two for the shipfile
         # TODO: Search any python files in the current dir
         path = os.path.join(self.dir, "shipfile.py")
-        if os.path.exists(path):
-            # Detected a shipyard file in the current dir, assume this is the patch folder
-            p = Patches(self.dir)
-            return p
+        paths = [
+            os.path.join(self.dir, "shipfile.py"),
+            os.path.join(".", "shipfile.py"),
+            os.path.join("..", "shipfile.py"),
+            os.path.join("../..", "shipfile.py")
+        ]
+        for path in paths:
+            if os.path.exists(path):
+                # Detected a shipyard file in the current dir, assume this is the patch folder
+                d, _ = os.path.split(path)
+                return Patches(d)
             #except Exception as e:
                 #print(f"[!] Detected a shipyard.py file. But there were errors loading it: {e}", file=sys.stderr)
                 #exit(127)
@@ -40,7 +46,6 @@ class cli:
         try:
             new_project(self.dir, url, name)
             p = self._load()
-            p.source.prepare() # Clone the source
         except Exception as e:
             print(e, file=sys.stderr)
             exit(127)
@@ -133,7 +138,8 @@ class cli:
         p = self._load()
         p.get_file_list()
         try:
-            for cf in p.apply_code_patches():
+            code_funcs, _ =  p.apply_code_patches()
+            for cf in code_funcs:
                 print(f"[+] applied {cf.__name__}")
         except Exception as e:
             print("[!]", e)

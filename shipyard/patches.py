@@ -19,7 +19,7 @@ from shipyard.jumpstart import jumpstart
 class Patches:
     """A manager for the patches that loops through a directory to figure out
     each version supported and that patches that we have for each one"""
-    def __init__(self, directory="."):
+    def __init__(self, directory=".", pull=True):
         self._dir = directory
         self.patches = {}
         self.code_patches = {} # Patches that are functions and not .patch files
@@ -34,8 +34,12 @@ class Patches:
             jumpstart(self.infoObject.resolve_source_directory(), self.infoObject.Urls)
         # If we wanted, we could use a different source manager here
         self.source:SourceManager = GitMgr(self.infoObject)
-        #self._ver = self.infoObject.tag_to_version(self.source.version())
-        self._ver = ""
+
+        if pull:
+            self.source.prepare()
+            self._ver = self.infoObject.tag_to_version(self.source.version())
+        else:
+            self._ver = ""
 
     def _checkout(self, version):
         """Checkout a version"""
@@ -290,7 +294,7 @@ class Patches:
 
         # Apply all the code patches
         self.get_file_list()
-        patches = self.apply_code_patches()
+        patches, _ = self.apply_code_patches()
 
         patch: PatchFile
         for patch in self.versions.get(version, []):

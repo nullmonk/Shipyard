@@ -6,6 +6,7 @@ shipfile.py
 
 logs/*
 
+_site
 # Distribution / packaging
 .Python
 env/
