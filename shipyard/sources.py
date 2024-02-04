@@ -34,8 +34,13 @@ class SourceProgram:
     version_to_tag = lambda _, s:s
     tag_to_version = lambda _, s:s
     is_version_ignored = lambda *_: False
-    _default_attributes = ("Url", "source_directory", "tag_to_version", "version_to_tag", "is_version_ignored", "Urls", "VersionTags", "Patches", "Variables")
-    
+
+    # Hooks for the shipfile
+    pre_patches = lambda *_: None
+    post_patches = lambda *_: None
+
+    _default_attributes = ("Url", "source_directory", "pre_patches", "post_patches", "tag_to_version", "version_to_tag", "is_version_ignored", "Urls", "VersionTags", "Patches", "Variables")
+
     def __init__(self, name) -> None:
         self.source_directory = None
         self.Name = name # unused
@@ -81,7 +86,7 @@ class SourceManager:
         """Use a specific version"""
         raise NotImplementedError()
 
-    def refresh(self, p: PatchFile, directory: str):
+    def refresh(self, p: PatchFile):
         """refresh a patch"""
         raise NotImplementedError()
 

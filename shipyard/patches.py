@@ -233,13 +233,6 @@ class Patches:
                 files.add(f)
         return cfs, files
 
-    def _check_codepatches(self):
-        """Ensure that all required codepatches have run"""
-        for cf in self.code_patches.values():
-            if not getattr(cf, "__patch_has_run", False) and getattr(cf, "__patch_required", True):
-                # This patch failed to run! error bc its required
-                raise AssertionError(f"Code patch {cf.__name__} did not run and is required")
-
     def __run_patches_on_file(self, file, patches=[]) -> set():
         """Run all eligable (within an optional subset) CodePatches on the given file"""
         can_run_on = set()
@@ -290,20 +283,8 @@ class Patches:
         else:
             version = vers[0]
 
+        patches, _ = self.patch(self.versions.get(version, []))
         new_patch = f"{self.infoObject.Name} {version}\n"
-
-        # Apply all the code patches
-        self.get_file_list()
-        patches, _ = self.apply_code_patches()
-
-        patch: PatchFile
-        for patch in self.versions.get(version, []):
-            self.source.apply(patch)
-            patches.add(patch.Name)
-
-
-        
-        self._check_codepatches() # Ensure all required codepatches have run
         new_patch += self.source.refresh()
 
         # Sub all the vars
@@ -312,51 +293,86 @@ class Patches:
         return new_patch, patches
     
     def export_from(self, directory):
-        """Apply code patches to an arbitrary directory and return the result"""
+        """Apply code patches to an arbitrary directory and return the result
+        
+        #TODO This thing could be the same as export with a different SourceManager to
+        handle two dirs, but for now just hack it
+        """
 
+        # Should be "checkout" or "prepare" in new srcmgr
         # Copy base as a working dir
         if not path.isdir(directory):
             raise ValueError(f"Not a valid directory: {directory}")
-        
         # Make a new working directory for us
         seconddir = directory.rstrip("/") + "-shipyard"
         copy_tree(directory, seconddir)
+        self.infoObject.source_directory = seconddir
 
-        # Generate a file list for the code_patches command
-        self.get_file_list(seconddir)
-        cfs, files = self.apply_code_patches()
-        self._check_codepatches() # Ensure all required codepatches have run
-
-        patch = ""
-
+        cfs, files = self.patch()
+        patch = f"{self.infoObject.Name}\n"
         prefix = path.commonpath([directory, seconddir])
         if not prefix:
             prefix = "."
-        for f in files:
-            f = path.relpath(f, seconddir) # Name of the file eg "kex.c" not "openssh/kex.c"
-            fa = path.relpath(path.join(directory, f), prefix)
-            fb = path.relpath(path.join(seconddir, f), prefix)
 
-            # Diff the results
-            args = ["git", "--no-pager", "diff", "--no-prefix", fa, fb]
-            res = subprocess.run(
-                args,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                encoding="utf-8",
-                cwd=prefix
-            )
-            # https://git-scm.com/docs/git-diff#Documentation/git-diff.txt-emgitdiffemltoptionsgt--no-index--ltpathgtltpathgt
-            # https://git-scm.com/docs/git-diff#Documentation/git-diff.txt---exit-code
-            # 0 means no changes, 1 means changes
-            if res.stderr:
-                raise ValueError(f"command failed to run: {' '.join(args)}: '{res.stderr}'")
-            patch += res.stdout
+        fa = path.relpath(directory, prefix)
+        fb = path.relpath(seconddir, prefix)
+        # TODO: Can I just diff the folders instead of each file?
+        #for f in files:
+        #    f = path.relpath(f, seconddir) # Name of the file eg "kex.c" not "openssh/kex.c"
+        #    fa = path.relpath(path.join(directory, f), prefix)
+        #    fb = path.relpath(path.join(seconddir, f), prefix)
+
+        # Diff the results
+        args = ["git", "--no-pager", "diff", "--no-prefix", fa, fb]
+        res = subprocess.run(
+            args,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            encoding="utf-8",
+            cwd=prefix
+        )
+        # https://git-scm.com/docs/git-diff#Documentation/git-diff.txt-emgitdiffemltoptionsgt--no-index--ltpathgtltpathgt
+        # https://git-scm.com/docs/git-diff#Documentation/git-diff.txt---exit-code
+        # 0 means no changes, 1 means changes
+        if res.stderr:
+            raise ValueError(f"command failed to run: {' '.join(args)}: '{res.stderr}'")
+        patch += res.stdout
         shutil.rmtree(seconddir)
         
         # Sub all the vars
         for k, v in self.infoObject.Variables.items():
             patch = patch.replace(k, v)
         return patch
+
+    def patch(self, patches=[], codepatches=[]) -> "tuple[set, set]":
+        """Patch source_dir with the given patches and the given codepatches
+        
+        Return: patches_run, files_changed
+
+        > Note only files modified by codepatches will be returned
+        """
+        self.get_file_list()
+
+        # Call the pre_patch hook
+        if self.infoObject.pre_patches and callable(self.infoObject.pre_patches):
+            self.infoObject.pre_patches()
+
+        run_patches, files = self.apply_code_patches(codepatches)
+        patch: PatchFile
+        for patch in patches:
+            self.source.apply(patch)
+            run_patches.add(patch.Name)
+
+        #Ensure that all required codepatches have run
+        for cf in self.code_patches.values():
+            if not getattr(cf, "__patch_has_run", False) and getattr(cf, "__patch_required", True):
+                # This patch failed to run! error bc its required
+                raise AssertionError(f"Code patch {cf.__name__} did not run and is required")
+        
+        # Call the post_patch hook
+        if self.infoObject.post_patches and callable(self.infoObject.post_patches):
+            self.infoObject.post_patches()
+
+        return run_patches, files
 
     def dump(self):
         print("patches versions:", list(self.versions.keys()))
