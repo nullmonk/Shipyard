@@ -10,7 +10,7 @@ designed to aid management of multiple patches that apply to multiple versions o
 
 Check out the [full documentation](https://micahjmartin.github.io/Shipyard/) to get started using Shipyard
 
-![](https://gist.githubusercontent.com/micahjmartin/c0d98f90983d93e498184c071dac1dca/raw/d215fc1e4b8827f3a08da9cce4a7959c380d949c/demo.svg)
+![](https://micahjmartin.github.io/Shipyard/assets/svg/patch_demo.svg)
 
 ## Getting Started
 
