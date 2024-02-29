@@ -1,0 +1,10 @@
+#!/bin/bash
+
+# Ensure that we have source repos installed
+sed -i 's/# deb-src/deb-src/' /etc/apt/sources.list
+grep "deb-src" /etc/apt/sources.list &>/dev/null
+if [ $? != 0 ]; then
+    src=`grep "deb" /etc/apt/sources.list | head -n 1`
+    src=`echo $src | sed -e 's/deb /deb-src /g'`
+    echo $src >> /etc/apt/sources.list
+fi

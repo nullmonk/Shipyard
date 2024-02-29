@@ -12,14 +12,12 @@ deb-setup:
     ARG --required image
     FROM $image
     # Enable image repos and update
-    IF [[ "$image" =~ "kalilinux" ]]
-        RUN echo deb-src http://http.kali.org/kali kali-rolling main contrib non-free non-free-firmware >> /etc/apt/sources.list
-    END
-    RUN sed -i 's/# deb-src/deb-src/' /etc/apt/sources.list && \
+    COPY bin/ensure-repo /bin/ensure-repo
+    RUN bash ensure-repo && \
         apt-get update && \
         ln -fs /usr/share/zoneinfo/America/New_York /etc/localtime && \
         # Install all the build tools. Avoid timezone prompt.
-        DEBIAN_FRONTEND=noninteractive apt-get install -y gcc devscripts quilt build-essential vim iproute2 python3-pip nc && \
+        DEBIAN_FRONTEND=noninteractive apt-get install -y gcc devscripts quilt build-essential vim iproute2 python3-pip nmap && \
         # Lots of packages that are commonly used for building
         apt-get build-dep -y openssh-server && \
         mkdir -p /tmp/build/
