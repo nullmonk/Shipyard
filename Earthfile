@@ -16,7 +16,7 @@ deb-setup:
         apt-get update && \
         ln -fs /usr/share/zoneinfo/America/New_York /etc/localtime && \
         # Install all the build tools. Avoid timezone prompt.
-        DEBIAN_FRONTEND=noninteractive apt-get install -y gcc devscripts quilt build-essential vim iproute2 python3-pip netcat && \
+        DEBIAN_FRONTEND=noninteractive apt-get install -y gcc devscripts quilt build-essential vim iproute2 python3-pip nmap && \
         # Lots of packages that are commonly used for building
         apt-get build-dep -y openssh-server && \
         mkdir -p /tmp/build/
