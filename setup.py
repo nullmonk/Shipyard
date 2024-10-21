@@ -13,7 +13,7 @@ setup(
     description='Patchfile management',
     long_description=long_description,
     long_description_content_type='text/markdown',
-    url='http://github.com/micahjmartin/shipyard',
+    url='http://github.com/nullmonk/shipyard',
     author='Micah Martin',
     author_email='',
     license='Apache 2.0',
@@ -41,8 +41,8 @@ setup(
         "bin/shipyard-build"
     ],
     project_urls={
-        'Bug Reports': 'https://github.com/micahjmartin/shipyard/issues',
-        'Source': 'https://github.com/micahjmartin/shipyard/',
+        'Bug Reports': 'https://github.com/nullmonk/shipyard/issues',
+        'Source': 'https://github.com/nullmonk/shipyard/',
     },
     zip_safe=True
 )

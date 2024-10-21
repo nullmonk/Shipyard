@@ -116,7 +116,7 @@ builder:
         COPY . /opt/install
         RUN python3 -m pip install /opt/install
     ELSE
-        RUN python3 -m pip install git+https://github.com/micahjmartin/Shipyard
+        RUN python3 -m pip install git+https://github.com/nullmonk/Shipyard
     END
 
 # Function to perform an actual build
