@@ -8,7 +8,6 @@ import shutil
 from os import path, walk, makedirs
 from collections import defaultdict
 from typing import List
-from distutils.dir_util import copy_tree
 
 from shipyard.patch import PatchFile
 from shipyard.utils import _load_object, getClosestVersions
@@ -305,6 +304,7 @@ class Patches:
             raise ValueError(f"Not a valid directory: {directory}")
         # Make a new working directory for us
         seconddir = directory.rstrip("/") + "-shipyard"
+        from distutils.dir_util import copy_tree
         copy_tree(directory, seconddir)
         self.infoObject.source_directory = seconddir
 

@@ -6,7 +6,7 @@ def _to_version_list(version) -> list:
         return [version]
     if not isinstance(version, str):
         version = str(version)
-    return [int(i) for i in re.split("[^\d]", version) if i.isnumeric()]
+    return [int(i) for i in re.split(r"[^\d]", version) if i.isnumeric()]
 
 class Version(str):
     """
