@@ -8,3 +8,6 @@ if [ $? != 0 ]; then
     src=`echo $src | sed -e 's/deb /deb-src /g'`
     echo $src >> /etc/apt/sources.list
 fi
+
+# Newer ubuntus install the sources here instead of in sources.list
+find /etc/apt/sources.list.d -type f -exec sed -i 's/Types:/Types: deb-src/' {} \;
