@@ -114,9 +114,9 @@ builder:
     IF [ "$dev" != "false" ]
         # For development, uncomment the above lines and use this
         COPY . /opt/install
-        RUN python3 -m pip install /opt/install
+        RUN python3 -m pip install --break-system-packages /opt/install
     ELSE
-        RUN python3 -m pip install git+https://github.com/nullmonk/Shipyard
+        RUN python3 -m pip install --break-system-packages git+https://github.com/nullmonk/Shipyard
     END
 
 # Function to perform an actual build
