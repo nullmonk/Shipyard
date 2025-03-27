@@ -53,7 +53,7 @@ rhel-setup:
 
     # Old versions of rocky/cent use python 3.6 which doesnt have dataclasses by default.
     # This command will error on new python so we just ignore the error
-    RUN python3 -m pip install dataclasses || echo "Skipping Dataclass installation"
+    RUN python3 -m pip install --break-system-packages dataclasses || echo "Skipping Dataclass installation"
 
 rhel-deps:
     FROM +rhel-setup
@@ -110,6 +110,8 @@ builder:
         RUN echo "Unsupported Docker image provided. You may need to modify this Earthfile 👀" && exit 127
     END
 
+    # stupid stupid stupid
+    RUN python3 -m pip config set global.break-system-packages true
     ARG dev = "false"
     IF [ "$dev" != "false" ]
         # For development, uncomment the above lines and use this
