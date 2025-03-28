@@ -38,7 +38,6 @@ deb-deps:
 rhel-setup:
     ARG --required image
     FROM $image
-    RUN yum update -y && yum install -y gcc rpmdevtools yum-utils make nc vim python3 python3-pip git
 
     # Rocky linux doesnt have core libraries in their repo :vomit:
     IF [[ "$image" = "rockylinux:8" ]]
@@ -49,7 +48,13 @@ rhel-setup:
         RUN echo "rocky:9: Enabling CRB" && dnf install -y epel-release dnf-plugins-core && \
             dnf config-manager --set-enabled crb && \
             dnf update -y
+    # Centos sucks
+    ELSE IF [[ "$image" =~ "centos:" ]]
+        sed -i 's/mirrorlist/#mirrorlist/g' /etc/yum.repos.d/CentOS-*
+        sed -i 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-*
     END
+
+    RUN yum update -y && yum install -y gcc rpmdevtools yum-utils make nc vim python3 python3-pip git
 
     # Old versions of rocky/cent use python 3.6 which doesnt have dataclasses by default.
     # This command will error on new python so we just ignore the error
@@ -111,7 +116,7 @@ builder:
     END
 
     # stupid stupid stupid
-    RUN python3 -m pip config set global.break-system-packages true
+    RUN python3 -m pip config set global.break-system-packages true || echo -n
     ARG dev = "false"
     IF [ "$dev" != "false" ]
         # For development, uncomment the above lines and use this
