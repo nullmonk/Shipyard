@@ -50,8 +50,8 @@ rhel-setup:
             dnf update -y
     # Centos sucks
     ELSE IF [[ "$image" =~ "centos:" ]]
-        sed -i 's/mirrorlist/#mirrorlist/g' /etc/yum.repos.d/CentOS-*
-        sed -i 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-*
+        RUN sed -i 's/mirrorlist/#mirrorlist/g' /etc/yum.repos.d/CentOS-* && \
+            sed -i 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-*
     END
 
     RUN yum update -y && yum install -y gcc rpmdevtools yum-utils make nc vim python3 python3-pip git
