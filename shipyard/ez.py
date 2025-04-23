@@ -8,8 +8,8 @@ from io import StringIO
 class EZ:
     def __init__(self, fname):
         self.name = fname
-        with open(fname) as f:
-            self.contents = f.read()
+        with open(fname, 'rb') as f:
+            self.contents = f.read().decode('utf8', 'replace')
     
     def __enter__(self):
         return self
