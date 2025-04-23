@@ -115,9 +115,9 @@ class cli:
             pkg = Pkg(package, groups.group(1), groups.group(2), groups.group(4), "")
 
             # Find the build folders installed
-            list_path = [i.lower() for i in os.listdir("BUILD") if os.path.isdir(os.path.join("BUILD", i))]
+            list_path = [i for i in os.listdir("BUILD") if os.path.isdir(os.path.join("BUILD", i))]
             for i in list_path:
-                if pkg.Name.lower() in i and pkg.Version.lower() in i:
+                if pkg.Name.lower() in i.lower() and pkg.Version.lower() in i.lower():
                     pkg.Folder = i
 
             print(f"[*] found '{pkg.Folder}' from file '{f[0]}'")
