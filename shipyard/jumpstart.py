@@ -1,6 +1,5 @@
 import os
 import re
-import requests
 import shutil
 import subprocess
 import tempfile
@@ -76,6 +75,7 @@ def select_format(url: str) -> (str, str):
 
 
 def download_version(url: str, version: str, fmt: str, dest: str):
+    import requests
     """A new release does a few things.
     1. delete all files that dont start with .git
     2. downloads and extract contents into the git
