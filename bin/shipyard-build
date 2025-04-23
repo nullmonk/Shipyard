@@ -117,8 +117,8 @@ class cli:
             # Find the build folders installed
             bdir = "BUILD"
             for i in os.listdir(bdir):
-                i = i.lower()
                 full_path = os.path.join(bdir, i)
+                i = i.lower()
                 if os.path.isdir(full_path):
                     if pkg.Name.lower() in i and pkg.Version.lower() in i:
                         pkg.Folder = full_path
