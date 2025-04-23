@@ -113,13 +113,19 @@ class cli:
             if not package:
                 package = groups.group(1)
             pkg = Pkg(package, groups.group(1), groups.group(2), groups.group(4), "")
-            pkg.Folder = f"BUILD/{pkg.Name}-{pkg.Version}"
-            print(f"[*] found '{pkg.Name}-{pkg.Version}' from file '{f[0]}'")
+
+            # Find the build folders installed
+            list_path = [i.lower() for i in os.listdir("BUILD") if os.path.isdir(os.path.join("BUILD", i))]
+            for i in list_path:
+                if pkg.Name.lower() in i and pkg.Version.lower() in i:
+                    pkg.Folder = i
+
+            print(f"[*] found '{pkg.Folder}' from file '{f[0]}'")
         else:
             print("[!] mode not supported for gen", self.mode)
             exit(127)
         
-        if not os.path.isdir(pkg.Folder):
+        if not pkg.Folder or not os.path.isdir(pkg.Folder):
             print(f"[!] Source folder '{pkg.Folder}' not found. Was the source package installed properly?")
             exit(1)
         return pkg
