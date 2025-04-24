@@ -101,7 +101,7 @@ builder:
     IF [[ "$image" =~ "(debian:|ubuntu:|linuxmintd|kalilinux)" ]]
         FROM +deb-deps
         ENV BUILD_MODE=deb
-    ELSE IF [[ "$image" =~ "(centos:|rockylinux:|fedora:|amazonlinux:)" ]]
+    ELSE IF [[ "$image" =~ "(redhat/|centos:|rockylinux:|fedora:|amazonlinux:)" ]]
         FROM +rhel-deps
         ENV BUILD_MODE=rpm
     ELSE IF [[ "$image" =~ "(archlinux:)" ]]
