@@ -173,7 +173,7 @@ class cli:
             if "shipfile.py" in files:
                 ctx = shipcontext
             else:
-                patches = [i for i in files if i.endswith(".patch") or i.endswith(".diff")]
+                patches = [os.path.join(shipcontext, i) for i in files if i.endswith(".patch") or i.endswith(".diff")]
         elif os.path.isfile(shipcontext):
             if shipcontext.endswith(".patch") or shipcontext.endswith(".diff"):
                 patches.append(shipcontext)
@@ -190,8 +190,8 @@ class cli:
             # Concat all the patchfiles we are given into a big patchfile
             print(f"[*] Saving patchfiles to {patchfile}: {patches}")
             with open(patchfile, "w") as f:
-                for f in patches:
-                    with open(f) as p:
+                for patch in patches:
+                    with open(patch) as p:
                         f.write(p.read())
                         f.write("\n")
             quit()

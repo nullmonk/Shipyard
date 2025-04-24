@@ -14,12 +14,12 @@ deb-setup:
     # Enable image repos and update
     COPY bin/ensure-repo /bin/ensure-repo
     RUN bash ensure-repo && \
-        apt-get update && \
+        apt-get update -qq && \
         ln -fs /usr/share/zoneinfo/America/New_York /etc/localtime && \
         # Install all the build tools. Avoid timezone prompt.
-        DEBIAN_FRONTEND=noninteractive apt-get install -y gcc devscripts quilt build-essential vim iproute2 python3-pip nmap && \
+        DEBIAN_FRONTEND=noninteractive apt-get install -qq -y gcc devscripts quilt build-essential vim iproute2 python3-pip nmap && \
         # Lots of packages that are commonly used for building
-        apt-get build-dep -y openssh-server && \
+        apt-get build-dep -qq -y openssh-server && \
         mkdir -p /tmp/build/
 
 # Install the deps for a specific package to be built
@@ -27,9 +27,9 @@ deb-deps:
     FROM +deb-setup
     ARG --required package
     WORKDIR /tmp/build
-    RUN apt-get build-dep -y $package && \
-        apt-get install -y $package || \
-        apt-get source $package
+    RUN apt-get build-dep -q -y $package && \
+        apt-get install -q -y $package || \
+        apt-get source -qq $package
 
 
 #####
@@ -187,9 +187,9 @@ SAVE:
     ARG artifacts = ""
     ARG output = "build/"
     IF [ "$BUILD_MODE" = "deb" ]
-        SAVE ARTIFACT $artifacts*_amd64.deb AS LOCAL $output
+        SAVE ARTIFACT *$artifacts*_amd64.deb AS LOCAL $output
     ELSE IF [ "$BUILD_MODE" = "rpm" ]
-        SAVE ARTIFACT RPMS/*/$artifacts*.rpm AS LOCAL $output
+        SAVE ARTIFACT RPMS/*/*$artifacts*.rpm AS LOCAL $output
     END
 
 # Target that wraps it all together
