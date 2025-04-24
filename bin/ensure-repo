@@ -4,7 +4,8 @@ set -x
 sed -i 's/# deb-src/deb-src/' /etc/apt/sources.list
 grep "deb-src" /etc/apt/sources.list &>/dev/null
 if [ $? != 0 ]; then
-    src=`grep "deb" /etc/apt/sources.list | head -n 1`
+    # Find the first deb source and convert it to source
+    src=`grep -E '^\s*deb ' /etc/apt/sources.list | head -n 1`
     src=`echo $src | sed -e 's/deb /deb-src /g'`
     echo $src >> /etc/apt/sources.list
 fi

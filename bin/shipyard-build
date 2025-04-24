@@ -10,21 +10,37 @@ import sys
 import os
 import re
 import subprocess
-import fire
 import glob
 
-from distutils.dir_util import copy_tree
-from dataclasses import dataclass
-from shipyard.patches import Patches
-from shipyard.ez import EZ
+try:
+    import fire
+except ImportError:
+    fire = None
 
-@dataclass
+try:
+    from shutil import copytree
+except ImportError:
+    from distutils.dir_util import copy_tree as copytree
+
+BUILD_MODES = {
+    "ubuntu": "deb",
+    "debian": "deb",
+    "centos": "rpm",
+    "fedora": "rpm",
+    "redhat": "rpm",
+
+    # TODO
+    "arch": "", 
+    "alpine": "",
+}
+
 class Pkg:
-    OriginalName: str
-    Name: str
-    Version: str
-    AdditionalVersion: str
-    Folder: str
+    def __init__(self, OriginalName, Name, Version="", AdditionalVersion="", Folder=""):
+        self.OriginalName = OriginalName
+        self.Name = Name
+        self.Version = Version
+        self.AdditionalVersion = AdditionalVersion
+        self.Folder = Folder
 
 def run(folder, args, err="", **kwargs):
     res = subprocess.run(
@@ -47,6 +63,7 @@ def GeneratePatch(shipcontext, pkg: Pkg, mode="") -> str:
     if its a zip, unzip it and use that dir as the new shipcontext
     if its a file, thats the shipfile
     """
+    from shipyard.patches import Patches
     p = Patches(shipcontext, pull=False)
     # Only code patches are here, this makes patching very nice for us
     if not p.versions:
@@ -75,13 +92,26 @@ SUPPORTED_MODES = ["deb", "rpm"]
 
 class cli:
     def __init__(self, mode=""):
-        self.mode = os.environ.get("BUILD_MODE", mode)
+        """Get system information"""
+        try:    
+            with open("/etc/os-release") as f:
+                lines = f.readlines()
+            os_info = dict(line.strip().split("=", 1) for line in lines if "=" in line)
+            self.os = os_info.get("ID", "unknown").strip('"')
+            self.os_version = os_info.get("VERSION_ID", "0").strip('"')
+        except:
+            raise ValueError(f"Build mode is not specified. Set BUILD_MODE or pass --mode. Supported modes: {list(set(SUPPORTED_MODES.values()))}")
+        
+        self.mode = BUILD_MODES.get(self.os, "")
         if not self.mode:
-            raise ValueError(f"Build mode is not specified. Set BUILD_MODE or pass --mode. Supported modes: {SUPPORTED_MODES}")
-    
+            self.mode = os.environ.get("BUILD_MODE", mode)
+            if not self.mode:
+                raise ValueError(f"Build mode is not specified. Set BUILD_MODE or pass --mode. Supported modes: {list(set(SUPPORTED_MODES.values()))}")
+
+
     def _get_pkg(self, package) -> Pkg:
         """Return a Pkg object with version information. System dependant"""
-        pkg = Pkg(package, package, "", "", "")
+        pkg = Pkg(package, package)
         # Get the current version
         if self.mode == "deb":
             # There should be a dsc file laying around here that we can parse the package version from
@@ -96,7 +126,7 @@ class cli:
                 exit(1)
             if not package:
                 package = groups.group(1)
-            pkg = Pkg(package, groups.group(1), groups.group(2), groups.group(4), "")
+            pkg = Pkg(package, groups.group(1), groups.group(2), groups.group(4))
             pkg.Folder = f"{pkg.Name}-{pkg.Version}"
             pkg.Version = pkg.Version.split("+")[0] # Hack for proftpd
             print(f"[*] found '{pkg.Name}-{pkg.Version}' from file '{f[0]}'")
@@ -112,7 +142,7 @@ class cli:
                 exit(1)
             if not package:
                 package = groups.group(1)
-            pkg = Pkg(package, groups.group(1), groups.group(2), groups.group(4), "")
+            pkg = Pkg(package, groups.group(1), groups.group(2), groups.group(4))
 
             # Find the build folders installed
             bdir = "BUILD"
@@ -198,13 +228,14 @@ class cli:
                 exit(127)
             
             print(f"[*] copying {pkg.Folder} to {pkg.Folder}-new")
-            copy_tree(pkg.Folder, pkg.Folder + "-new")
+            copytree(pkg.Folder, pkg.Folder + "-new")
             print(f"[*] Applying patch file to {pkg.Folder}-new")
             res = run(pkg.Folder + "-new", ["patch", "-p1", "-f", "-i", patchfile], "Error importing patch")
             with open(patchfile) as p:
                 with open(f"SOURCES/{pkg.OriginalName}.patch", "w") as newpatch:
                     newpatch.write(p.read())
             print(f"[*] Copied {patchfile} -> SOURCES/{pkg.OriginalName}.patch")
+            from shipyard.ez import EZ
             with EZ(f[0]) as z:
                 # Find the highest numbered patch file
                 last = -1
@@ -246,7 +277,6 @@ class cli:
                 stdout=sys.stdout,
                 stderr=sys.stderr,
                 cwd=pkg.Folder,
-                encoding="utf-8",
                 env=env
             )
             exit(res.returncode)
@@ -260,10 +290,95 @@ class cli:
                 ["rpmbuild", "--define", "debug_package %{nil}", "--nocheck", "-bb", f[0]],
                 stdout=sys.stdout,
                 stderr=sys.stderr,
-                encoding="utf-8",
             )
             exit(res.returncode)
         raise NotImplementedError(f"Cannot apply on '{self.mode}' systems")
+    
+    def setup(self):
+        """Setup the system for building, install dependancies, and enable source repos"""
+        if self.os in ["ubuntu", "debian"]:
+            print("[*] Enabling source mirrors")
+            with open("/etc/apt/sources.list", "r+") as f:
+                new_lines = []
+                srcs = False
+                first_deb = ""
+                for line in f.readlines():
+                    line = line.strip()
+                    # Save the first valid line we come across
+                    if line and not line.startswith("#") and "deb " in line and not first_deb:
+                        first_deb = line
+                    # Uncomment any source mirrors
+                    if "deb-src" in line:
+                        line = line.strip("# ")
+                        srcs = True
+                    new_lines.append(line)
+                if not srcs:
+                    new_lines.append(first_deb.replace("deb ", "deb-src "))
+                new_lines.append("")
+                f.truncate(0)
+                f.write("\n".join(new_lines))
+            
+            # Ubuntu uses a new format for apt sources
+            for root, _, files in os.walk("/etc/apt/sources.list.d"):
+                for filename in files:
+                    filepath = os.path.join(root, filename)
+                    # Read the entire file content
+                    with open(filepath, 'r') as f:
+                        content = f.read().replace("Types:", "Types: deb-src")
+                    # Write the modified content back to the file
+                    with open(filepath, 'w') as f:
+                        f.write(content)
+
+            print("[*] Updating apt-cache")
+            subprocess.run("apt-get update -qq", shell=True, stdout=sys.stdout, stderr=sys.stderr)
+
+        elif self.os == "fedora":
+            subprocess.run("dnf install -y -q dnf-plugins-core", shell=True)
+            subprocess.run("dnf config-manager --set-enabled fedora-source updates-source", shell=True, check=False)
+            subprocess.run("dnf makecache -q", shell=True)
+
+        elif self.os in ["centos", "rhel", "rocky", "almalinux"]:
+            subprocess.run("yum install -y -q yum-utils", shell=True)
+            subprocess.run("dnf config-manager --set-enabled crb powertools", shell=True, check=False)
+            result = subprocess.run("yum repolist all", shell=True, stdout=subprocess.PIPE)
+            if any(x in result.stdout.decode() for x in ["PowerTools", "powertools", "crb"]):
+                subprocess.run("yum-config-manager --enable PowerTools powertools crb", shell=True, check=False)
+            subprocess.run("yum-config-manager --enable base-source updates-source", shell=True, check=False)
+            subprocess.run("yum makecache -q", shell=True)
+
+        elif self.os == "arch":
+            # TODO Convert this to python
+            subprocess.run("sed -i 's/^#\\[.*\\]/[core]/' /etc/pacman.conf", shell=True)
+            subprocess.run("sed -i 's/^#Include/Include/' /etc/pacman.conf", shell=True)
+            subprocess.run("pacman -Sy --noconfirm", shell=True)
+        
+        else:
+            print(f"Unsupported distro for source repo enabling: {self.os}")
+
+        self.pip_install("--upgrade", "pip", "setuptools", "wheel")
+
+    def install_package(self, *packages):
+        pkg_str = " ".join(packages)
+        if self.os in ["ubuntu", "debian"]:
+            subprocess.run(f"apt-get install -y -qq {pkg_str}", shell=True)
+        elif self.os == "fedora":
+            subprocess.run(f"dnf install -y -q {pkg_str}", shell=True)
+        elif self.os in ["centos", "rhel", "rocky", "almalinux"]:
+            subprocess.run(f"yum install -y -q {pkg_str}")
+        elif self.os == "arch":
+            subprocess.run(f"pacman -S --noconfirm {pkg_str}", shell=True)
+        elif self.os == "alpine":
+            subprocess.run(f"apk add --no-cache -q {pkg_str}", shell=True)
+        else:
+            print(f"Unsupported distro: {self.os}")
+            sys.exit(1)
+
+    def pip_install(self, *args):
+        subprocess.run(f"python3 -m pip install --quiet {' '.join(args)}", shell=True)
 
 if __name__ == '__main__':
-    fire.Fire(cli)
+    if fire:
+        fire.Fire(cli)
+    else:
+        c = cli()
+        c.setup()
