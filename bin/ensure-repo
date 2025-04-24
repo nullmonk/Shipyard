@@ -1,5 +1,5 @@
 #!/bin/bash
-
+set -x
 # Ensure that we have source repos installed
 sed -i 's/# deb-src/deb-src/' /etc/apt/sources.list
 grep "deb-src" /etc/apt/sources.list &>/dev/null

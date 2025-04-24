@@ -327,7 +327,8 @@ class Patches:
         res = subprocess.run(
             args,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            encoding="utf-8",
+            encoding="utf8",
+            text=True,
             cwd=prefix
         )
         # https://git-scm.com/docs/git-diff#Documentation/git-diff.txt-emgitdiffemltoptionsgt--no-index--ltpathgtltpathgt

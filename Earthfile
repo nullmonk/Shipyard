@@ -121,7 +121,7 @@ builder:
     IF [ "$dev" != "false" ]
         # For development, uncomment the above lines and use this
         COPY . /opt/install
-        RUN python3 -m pip instal /opt/install
+        RUN python3 -m pip install /opt/install
     ELSE
         RUN python3 -m pip install git+https://github.com/nullmonk/Shipyard
     END
