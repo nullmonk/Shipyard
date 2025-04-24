@@ -9,6 +9,11 @@ from os import path, walk, makedirs
 from collections import defaultdict
 from typing import List
 
+try:
+    from shutil import copytree
+except ImportError:
+    from distutils.dir_util import copy_tree as copytree
+
 from shipyard.patch import PatchFile
 from shipyard.utils import _load_object, getClosestVersions
 from shipyard.git import SourceProgram, SourceManager, GitMgr
@@ -304,8 +309,7 @@ class Patches:
             raise ValueError(f"Not a valid directory: {directory}")
         # Make a new working directory for us
         seconddir = directory.rstrip("/") + "-shipyard"
-        from distutils.dir_util import copy_tree
-        copy_tree(directory, seconddir)
+        copytree(directory, seconddir)
         self.infoObject.source_directory = seconddir
 
         cfs, files = self.patch()
@@ -328,7 +332,6 @@ class Patches:
             args,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             encoding="utf8",
-            text=True,
             cwd=prefix
         )
         # https://git-scm.com/docs/git-diff#Documentation/git-diff.txt-emgitdiffemltoptionsgt--no-index--ltpathgtltpathgt

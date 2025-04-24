@@ -61,7 +61,7 @@ rhel-deps:
     ARG --required package
     WORKDIR /tmp/build
     # TODO: Package installs here
-    RUN yum-builddep -y $package
+    RUN yum-builddep --skip-broken -y $package
     RUN useradd -m mockbuild && groupadd mock && \
         usermod -G wheel mockbuild && \
         echo "%wheel  ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers && \
