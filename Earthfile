@@ -28,7 +28,7 @@ deb-deps:
     ARG --required package
     WORKDIR /tmp/build
     RUN apt-get build-dep -y $package && \
-        apt-get install -y $package && \
+        apt-get install -y $package || \
         apt-get source $package
 
 
