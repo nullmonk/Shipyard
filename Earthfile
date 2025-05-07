@@ -118,7 +118,7 @@ builder:
     RUN python3 -m pip install dataclasses setuptools || echo "Skipping Dataclass installation"
 
     ARG dev = "false"
-    IF [ "$dev" != "false" ]
+    IF [[ "$dev" != "false" ]]
         # For development, uncomment the above lines and use this
         COPY . /opt/install
         RUN python3 -m pip install /opt/install
