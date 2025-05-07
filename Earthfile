@@ -17,7 +17,7 @@ deb-setup:
         apt-get update -qq && \
         ln -fs /usr/share/zoneinfo/America/New_York /etc/localtime && \
         # Install all the build tools. Avoid timezone prompt.
-        DEBIAN_FRONTEND=noninteractive apt-get install -qq -y gcc devscripts quilt build-essential vim iproute2 python3-pip nmap && \
+        DEBIAN_FRONTEND=noninteractive apt-get install -qq -y gcc devscripts quilt build-essential vim iproute2 python3-pip nmap git && \
         # Lots of packages that are commonly used for building
         apt-get build-dep -qq -y openssh-server && \
         mkdir -p /tmp/build/
@@ -115,7 +115,7 @@ builder:
     RUN python3 -m pip config set global.break-system-packages true || echo -n
     # Old versions of rocky/cent use python 3.6 which doesnt have dataclasses by default.
     # This command will error on new python so we just ignore the error
-    RUN python3 -m pip install dataclasses || echo "Skipping Dataclass installation"
+    RUN python3 -m pip install dataclasses setuptools || echo "Skipping Dataclass installation"
 
     ARG dev = "false"
     IF [ "$dev" != "false" ]

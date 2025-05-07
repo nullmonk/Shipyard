@@ -70,7 +70,10 @@ class EZ:
             idx = res.start()
         
         f.write(self.contents[:idx])
-        f.write("\n".join(lines)+"\n")
+        if isinstance(lines, str):
+            f.write(lines)
+        else:
+            f.write("\n".join(lines)+"\n")
         f.write(self.contents[idx:])
 
         self.contents = f.getvalue()
