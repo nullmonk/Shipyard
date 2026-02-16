@@ -2,14 +2,11 @@
 # (versions) and check them out accordingly
 
 import os
-import re
-import shutil
 import inspect
 
 from typing import List
 from dataclasses import dataclass
 
-from shipyard.version import Version
 from shipyard.patch import PatchFile
 
 @dataclass
@@ -31,18 +28,23 @@ class SourceProgram:
     Urls = [] # Pass a list of urls instead of a git repo
 
     """If the version string is different than the git tag, do the conversions here"""
-    version_to_tag = lambda _, s:s
-    tag_to_version = lambda _, s:s
-    is_version_ignored = lambda *_: False
+    def _identity(_, s): return s
+    def _false(*_): return False
+    def _none(*_): return None
+
+    version_to_tag = _identity
+    tag_to_version = _identity
+    is_version_ignored = _false
 
     # Hooks for the shipfile
-    pre_patches = lambda *_: None
-    post_patches = lambda *_: None
+    pre_patches = _none
+    post_patches = _none
 
-    _default_attributes = ("Url", "source_directory", "pre_patches", "post_patches", "tag_to_version", "version_to_tag", "is_version_ignored", "Urls", "VersionTags", "Patches", "Variables")
+    _default_attributes = ("Url", "source_directory", "pre_patches", "post_patches", "tag_to_version", "version_to_tag", "is_version_ignored", "Urls", "VersionTags", "Patches", "Variables", "Package")
 
     def __init__(self, name) -> None:
         self.source_directory = None
+        self.Package = None
         self.Name = name # unused
         self.Directory = self.Name # internal only
         self._filepath = ""

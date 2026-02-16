@@ -113,7 +113,7 @@ class GitMgr(SourceManager):
     def reset(self):
         self.prepare()
         res = subprocess.run(
-            f"git checkout .",
+            "git checkout .",
             shell=True,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             cwd=self.r.Directory,
@@ -123,7 +123,7 @@ class GitMgr(SourceManager):
             raise ValueError(res.stderr)
     
         res = subprocess.run(
-            f"git clean -fdx",
+            "git clean -fdx",
             shell=True,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             cwd=self.r.Directory,

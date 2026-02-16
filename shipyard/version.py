@@ -22,19 +22,19 @@ class Version(str):
     def __hash__(self) -> int:
         return super().__hash__()
     
-    def __lt__(self, other: str):
+    def __lt__(self, other):
         return self._v < _to_version_list(other)
     
-    def __gt__(self, other: str):
+    def __gt__(self, other):
         return self._v > _to_version_list(other)
 
     def __eq__(self, other):
         return self._v == _to_version_list(other)
 
-    def __le__(self, other: str) -> bool:
+    def __le__(self, other) -> bool:
         return self._v <= _to_version_list(other)
     
-    def __ge__(self, other: str) -> bool:
+    def __ge__(self, other) -> bool:
         return self._v >= _to_version_list(other)
 
 if __name__ == '__main__':

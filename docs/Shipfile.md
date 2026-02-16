@@ -27,6 +27,17 @@ git tags which denote versions. The pattern can be tested in the source repo by 
 #### Patches
 The directory to search in for patch files. This directory will contain version folders which then contain several patch files.
 
+#### Package
+The default name of the package to be built. If specified here, the `PACKAGE` argument in the `shipyard build` command becomes optional.
+
+```python
+class Shipfile:
+    ...
+    Package = "proftpd"
+```
+
+If you run `shipyard build debian:bookworm`, it will use "proftpd". You can override this by explicitly providing the package name: `shipyard build debian:bookworm other-package`.
+
 #### source_directory
 The directory which contains the source repo, relative to the Shipfile. Can either be a string or a function which returns a string.
 

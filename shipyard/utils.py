@@ -31,16 +31,18 @@ def getClosestVersions(version: str, versions: List[Version]) -> str:
     vs = sorted(vs)
     idx = vs.index(version)
     newVersions = []
-    l, r = idx-1, idx+1
-    while l >= 0 or r < len(vs):
-        if l >= 0:
-            nxt = vs[l]
-            if nxt != version: newVersions.append(nxt)
-            l-=1
-        if r < len(vs):
-            nxt = vs[r]
-            if nxt != version: newVersions.append(nxt)
-            r+=1
+    left, right = idx-1, idx+1
+    while left >= 0 or right < len(vs):
+        if left >= 0:
+            nxt = vs[left]
+            if nxt != version:
+                newVersions.append(nxt)
+            left-=1
+        if right < len(vs):
+            nxt = vs[right]
+            if nxt != version:
+                newVersions.append(nxt)
+            right+=1
     if not newVersions:
         return [version]
     return newVersions

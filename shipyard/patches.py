@@ -84,7 +84,7 @@ class Patches:
                     continue
                 try:
                     patch = PatchFile.from_file(path.join(root, p))
-                except:
+                except Exception:
                     raise ValueError(f"Invalid patchfile '{p}'")
                 #patch.update(self.infoObject.Variables)
                 self.patches[patch.Name] = patch
@@ -241,8 +241,14 @@ class Patches:
         """Run all eligable (within an optional subset) CodePatches on the given file"""
         can_run_on = set()
         r: re.Pattern
+        
+        base = self.infoObject.resolve_source_directory()
+        rel_file = file
+        if file.startswith(base):
+            rel_file = file[len(base):]
+
         for r, funcs in self.code_res.items():
-            if r.fullmatch(file):
+            if r.fullmatch(rel_file) or r.fullmatch(rel_file.lstrip("/")):
                 for f in funcs:
                     if patches and f.__name__ not in patches:
                         continue # This patch is not in the given subset, skip it
@@ -282,10 +288,13 @@ class Patches:
     def export(self, version="") -> str:
         """Apply all patches and CodePatches to a version and dump out a new patchfile with all the changes"""
         vers = self.source.versions()
-        if len(vers) > 1:
-            self._checkout(version)
-        else:
-            version = vers[0]
+        if not version:
+            if vers:
+                version = vers[-1]
+            else:
+                raise ValueError("No versions found to export")
+        
+        self._checkout(version)
 
         patches, _ = self.patch(self.versions.get(version, []))
         new_patch = f"{self.infoObject.Name} {version}\n"
