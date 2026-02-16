@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "shipyard"
+version = "0.1.0"
+description = "A simple, robust build system for managing patches"
+readme = "README.md"
+authors = [{ name = "nullmonk", email = "nullmonk@example.com" }]
+license = { text = "MIT" }
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "fire",
+    "requests",
+]
+requires-python = ">=3.7"
+
+[project.scripts]
+shipyard = "shipyard.cli:run"
+shipyard-build = "shipyard.builder:run"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["shipyard*"]
