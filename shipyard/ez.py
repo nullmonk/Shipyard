@@ -1,8 +1,4 @@
 import re
-try:
-    from re import Pattern
-except ImportError:
-    re.Pattern = str # F old python
 from io import StringIO
 
 class EZ:

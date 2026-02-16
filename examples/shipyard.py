@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import os
 import sys
-import anyio
 
 # Add the parent directory to sys.path to import shipyard
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))

@@ -60,14 +60,6 @@ class DistroDriver(ABC):
         """
         dir_path = self.get_artifact_dir()
         try:
-            # Use find to list files relative to the artifact dir
-            # We use `find . -maxdepth 1 -type f` if we want flat list, or just `find . -type f`
-            # The current logic implies flat export for debian, recursive for rpm?
-            # Let's list all files recursively relative to dir_path
-            
-            # We execute find inside the container
-            # output will be ./file1, ./dir/file2, etc.
-            
             output = await (
                 container
                 .with_workdir(dir_path)

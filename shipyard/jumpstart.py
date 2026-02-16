@@ -32,7 +32,7 @@ def jumpstart(dest: str, urls: List[str]):
         download_version(url, version, fmt, dest)
 
 def commit(dest, msg, version=None):
-    r = subprocess.run(f'git add -Av', shell=True, cwd=dest, stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding="utf-8")
+    r = subprocess.run('git add -Av', shell=True, cwd=dest, stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding="utf-8")
     if r.returncode != 0:
         raise ValueError("git-add: "+r.stderr+r.stdout)
     r = subprocess.run(f'git commit -m "{msg}"', shell=True, cwd=dest, stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding="utf-8")

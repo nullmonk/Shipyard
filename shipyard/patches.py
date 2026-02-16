@@ -84,7 +84,7 @@ class Patches:
                     continue
                 try:
                     patch = PatchFile.from_file(path.join(root, p))
-                except:
+                except Exception:
                     raise ValueError(f"Invalid patchfile '{p}'")
                 #patch.update(self.infoObject.Variables)
                 self.patches[patch.Name] = patch

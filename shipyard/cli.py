@@ -46,7 +46,7 @@ class ShipyardCLI:
         """
         try:
             new_project(self.dir, url, name)
-            p = self._load()
+            self._load()
         except Exception as e:
             print(e, file=sys.stderr)
             exit(127)
@@ -100,7 +100,7 @@ class ShipyardCLI:
         """Test a patch file against all versions"""
         p = self._load()
         patch = patchfile
-        if not patchfile in p.code_patches:
+        if patchfile not in p.code_patches:
             try:
                 patch = PatchFile.from_file(patchfile)
             except Exception as e:
@@ -222,7 +222,7 @@ class ShipyardCLI:
             # Default behavior: try to find shipfile in current/parent dirs
             try:
                 p = self._load()
-            except Exception as e:
+            except Exception:
                 # If we can't load a shipfile and no patch is provided, we can't proceed unless user provided a patch file
                 pass
 
@@ -242,7 +242,7 @@ class ShipyardCLI:
                 vers = p.source.versions()
                 if vers:
                     resolved_version = str(vers[-1])
-            except:
+            except Exception:
                 pass
 
         # Generate patch content if we haven't already (from Shipfile)

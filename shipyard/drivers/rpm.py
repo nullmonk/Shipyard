@@ -1,7 +1,6 @@
 from .base import DistroDriver
 import dagger
 import re
-from io import StringIO
 
 class RPMDriver(DistroDriver):
     def setup(self, container: dagger.Container) -> dagger.Container:
@@ -109,7 +108,7 @@ class RPMDriver(DistroDriver):
                     p_num = p_part[len("Patch"):]
                     if p_num.isnumeric():
                         last = max(int(p_num), last)
-                except:
+                except (ValueError, IndexError):
                     pass
             if i.strip().startswith("%patch"):
                 spec_format = i.strip()

@@ -45,20 +45,6 @@ class DebianDriver(DistroDriver):
          return container
 
     async def apply_patch(self, container: dagger.Container, patch_content: str, package: str) -> dagger.Container:
-        # We need to find the source directory first.
-        # `apt-get source` creates a directory like `package-version`.
-        # Since we are in /tmp/build, we can use `cd */` trick inside `bash`.
-        # But `quilt` needs to run *inside* that directory.
-        
-        # We also need to copy the patch file *into* that directory for quilt to see it relative to source root?
-        # Actually `quilt import` takes a path.
-        
-        # So:
-        # 1. Write patch to /tmp/build/shipyard.patch
-        # 2. Run quilt commands inside the source dir.
-        
-        # Note: We use `bash -c "cd */ && quilt ..."` because we don't know the dir name.
-        
         return (
             container
             .with_new_file("/tmp/build/shipyard.patch", patch_content)

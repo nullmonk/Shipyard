@@ -1,6 +1,4 @@
 import os
-import pathlib
-import fire
 template = '''"""
 A file that tells shipyard where the source is located and how to properly work with it
 """
