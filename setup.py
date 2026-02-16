@@ -36,9 +36,11 @@ setup(
         'fire',
         'requests',
     ],
+    extras_require={
+        'dagger': ['dagger-io', 'anyio'],
+    },
     scripts=[
-        "bin/shipyard",
-        "bin/shipyard-build"
+        "bin/shipyard"
     ],
     project_urls={
         'Bug Reports': 'https://github.com/nullmonk/shipyard/issues',

@@ -12,9 +12,7 @@ deb-setup:
     ARG --required image
     FROM $image
     # Enable image repos and update
-    COPY bin/ensure-repo /bin/ensure-repo
-    RUN bash ensure-repo && \
-        apt-get update -qq && \
+    RUN apt-get update -qq && \
         ln -fs /usr/share/zoneinfo/America/New_York /etc/localtime && \
         # Install all the build tools. Avoid timezone prompt.
         DEBIAN_FRONTEND=noninteractive apt-get install -qq -y gcc devscripts quilt build-essential vim iproute2 python3-pip nmap git && \

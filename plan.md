@@ -32,20 +32,15 @@ This plan outlines the core goals and subgoals for updating the Shipyard project
 ## Subgoals
 
 ### 1. Refine Core CLI & Remove `shipyard-build`
-- [ ] **Refactor CLI**: Clean up `shipyard/cli.py` to focus on the developer workflow (init, import, export).
-- [ ] **Remove `bin/shipyard-build`**: Delete the script and its associated logic in `shipyard/builder.py` (if any).
-- [ ] **Modernize Packaging**: Update `pyproject.toml` to strictly define the `shipyard` entry point.
+- [x] **Refactor CLI**: Clean up `shipyard/cli.py` to focus on the developer workflow (init, import, export).
+- [x] **Remove `bin/shipyard-build`**: Delete the script and its associated logic in `shipyard/builder.py` (if any).
+- [x] **Modernize Packaging**: Update `pyproject.toml` to strictly define the `shipyard` entry point.
 
 ### 2. Integrate Dagger for Host-Side Orchestration
-- [ ] **Create `shipyard.engines.dagger`**: A module responsible for translating `Shipfile` instructions into Dagger graphs.
-- [ ] **Implement `PatchBackend` Interface**: Define the contract for applying patches (Local vs Dagger).
-- [ ] **Implement "Patch Injector"**: Logic to mount local patch files into the Dagger container at runtime.
-- [ ] **Implement "Distro Drivers"**: Classes that know how to generate Dagger commands for specific distros (Debian vs. RPM).
-
-### 3. Decouple Build Logic
-- [ ] **Define `BuildSpec`**: An intermediate data structure that represents *what* needs to be done.
-- [ ] **Refactor `Shipfile` loading**: Ensure `Shipfile` can be parsed to produce a `BuildSpec` without needing a full build environment.
-- [ ] **Verify Conundrum Resolution**: Test that `shipyard build` successfully runs a Dagger pipeline by injecting patches from the host.
+- [x] **Create `shipyard.engines.dagger`**: A module responsible for translating `Shipfile` instructions into Dagger graphs.
+- [x] **Implement `PatchBackend` Interface**: Define the contract for applying patches (Local vs Dagger).
+- [x] **Implement "Patch Injector"**: Logic to mount local patch files into the Dagger container at runtime.
+- [x] **Implement "Distro Drivers"**: Classes that know how to generate Dagger commands for specific distros (Debian vs. RPM).S
 
 ### 4. Improve Code Quality & Documentation
 - [ ] **Static Analysis**: Integrate `ruff` for linting and `mypy` for type checking.
