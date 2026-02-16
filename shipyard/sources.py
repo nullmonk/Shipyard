@@ -39,10 +39,11 @@ class SourceProgram:
     pre_patches = lambda *_: None
     post_patches = lambda *_: None
 
-    _default_attributes = ("Url", "source_directory", "pre_patches", "post_patches", "tag_to_version", "version_to_tag", "is_version_ignored", "Urls", "VersionTags", "Patches", "Variables")
+    _default_attributes = ("Url", "source_directory", "pre_patches", "post_patches", "tag_to_version", "version_to_tag", "is_version_ignored", "Urls", "VersionTags", "Patches", "Variables", "Package")
 
     def __init__(self, name) -> None:
         self.source_directory = None
+        self.Package = None
         self.Name = name # unused
         self.Directory = self.Name # internal only
         self._filepath = ""

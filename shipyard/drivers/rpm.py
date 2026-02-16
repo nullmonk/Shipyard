@@ -160,7 +160,7 @@ class RPMDriver(DistroDriver):
         )
 
     def get_artifact_pattern(self, package: str) -> str:
-        return f"**/*{package}*.rpm"
+        return r".*\.rpm$"
 
     def get_artifact_dir(self) -> str:
         return "/tmp/build/RPMS"

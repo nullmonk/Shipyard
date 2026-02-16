@@ -53,3 +53,32 @@ class DistroDriver(ABC):
         Return the directory where artifacts are built.
         """
         pass
+
+    async def list_artifacts(self, container: dagger.Container) -> list[str]:
+        """
+        List all artifacts in the artifact directory.
+        """
+        dir_path = self.get_artifact_dir()
+        try:
+            # Use find to list files relative to the artifact dir
+            # We use `find . -maxdepth 1 -type f` if we want flat list, or just `find . -type f`
+            # The current logic implies flat export for debian, recursive for rpm?
+            # Let's list all files recursively relative to dir_path
+            
+            # We execute find inside the container
+            # output will be ./file1, ./dir/file2, etc.
+            
+            output = await (
+                container
+                .with_workdir(dir_path)
+                .with_exec(["find", ".", "-type", "f"])
+                .stdout()
+            )
+            
+            files = [f.strip() for f in output.splitlines() if f.strip()]
+            # Normalize paths (remove leading ./)
+            files = [f[2:] if f.startswith("./") else f for f in files]
+            return files
+        except Exception as e:
+            print(f"Warning: Failed to list artifacts: {e}")
+            return []

@@ -26,3 +26,6 @@ wheels/
 .installed.cfg
 *.egg
 .tmp-earthly-out/
+
+*.rpm
+*.deb

@@ -7,13 +7,15 @@ class DebianDriver(DistroDriver):
             container
             #TODO Can I pull the timezone from the local environment here?
             .with_exec(["ln", "-fs", "/usr/share/zoneinfo/America/New_York", "/etc/localtime"])
-            # Ensure source repos
-            .with_exec(["sed", "-i", "s/# deb-src/deb-src/", "/etc/apt/sources.list"])
+            # Ensure source repos (Handle both legacy sources.list and modern sources.list.d)
             .with_exec([
                 "/bin/bash", "-c",
-                "if ! grep -q 'deb-src' /etc/apt/sources.list; then "
-                "src=$(grep -E '^\\s*deb ' /etc/apt/sources.list | head -n 1); "
-                "echo \"${src/deb /deb-src }\" >> /etc/apt/sources.list; "
+                "if [ -f /etc/apt/sources.list ]; then "
+                "  sed -i 's/# deb-src/deb-src/' /etc/apt/sources.list; "
+                "  if ! grep -q 'deb-src' /etc/apt/sources.list; then "
+                "    src=$(grep -E '^\\s*deb ' /etc/apt/sources.list | head -n 1); "
+                "    if [ -n \"$src\" ]; then echo \"${src/deb /deb-src }\" >> /etc/apt/sources.list; fi; "
+                "  fi; "
                 "fi"
             ])
             # Newer ubuntus install the sources here instead of in sources.list
@@ -25,8 +27,6 @@ class DebianDriver(DistroDriver):
                 "gcc", "devscripts", "quilt", "build-essential",
                 "vim", "iproute2", "python3-pip", "nmap", "git"
             ])
-            # Common build deps
-            .with_exec(["apt-get", "build-dep", "-qq", "-y", "openssh-server"])
             .with_exec(["mkdir", "-p", "/tmp/build/"])
         )
 
@@ -84,7 +84,7 @@ class DebianDriver(DistroDriver):
         )
 
     def get_artifact_pattern(self, package: str) -> str:
-        return f"*{package}*_amd64.deb"
+        return r".*\.deb$"
     
     def get_artifact_dir(self) -> str:
         return "/tmp/build"
