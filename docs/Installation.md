@@ -4,7 +4,7 @@ layout: home
 nav_order: 1
 ---
 
-## Installation
+# Installation
 {: .no_toc }
 <details open markdown="block">
   <summary>

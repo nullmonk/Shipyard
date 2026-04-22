@@ -3,7 +3,7 @@ title: Getting Started
 layout: home
 nav_order: 10
 ---
-## Getting Started
+# Getting Started
 {: .no_toc }
 <details open markdown="block">
   <summary>
