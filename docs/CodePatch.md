@@ -59,7 +59,7 @@ class Shipfile:
                 r"def main\(.*\):", # the string to match on
                 [
                     "\tif sys.argv[0] == 'shipyard':",
-                    "\t\traise ValueError('shipyard sucks')
+                    "\t\traise ValueError('shipyard sucks')"
                 ], # Lines to insert into the code
                 before=False # Insert the line AFTER the regex,
                 err="Cannot find main with re: {regex}"
@@ -77,7 +77,7 @@ Easy provides several functions for modifying the patches:
 ```python
 with EZ(file) as f:
     f.replace('"cat"', '"dog"', err="Hunk #1 failed: cannot find '{k}'")
-    f.replace(re.Compile(r'"[Cc]at"', '"dog"'), err="Hunk #1 failed: cannot find '{k}'")
+    f.replace(re.compile(r'"[Cc]at"'), '"dog"', err="Hunk #1 failed: cannot find '{k}'")
 ```
 
 If `err` is specified, the function will throw a `LookupError` if replacement does not occurr. If `err` may either be a string (with optional templating for `{k}` and `{v}`) or `True` to use the default error message.
@@ -87,8 +87,8 @@ If `err` is specified, the function will throw a `LookupError` if replacement do
 ```python
 with EZ(file) as f:
     f.replace_all({
-        re.Compile(r'"[Cc]at"', '"dog"'), '"dog"',
-        "horse": "zebra"
+        re.compile(r'"[Cc]at"'): '"dog"',
+        "horse": "zebra",
     })
 ```
 

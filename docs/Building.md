@@ -1,5 +1,10 @@
 # Building Patches
 
+> **Prerequisites:** Building requires the Dagger extras. Install with:
+> ```bash
+> pip install "shipyard[all] @ git+https://github.com/nullmonk/shipyard"
+> ```
+
 Shipyard uses [Dagger](https://dagger.io) to build packages in isolated containers. This ensures reproducible builds across different environments.
 
 ## Build Command

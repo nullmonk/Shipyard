@@ -1,5 +1,5 @@
 # Shipfile
-A shipfile is the workhorse of Shipyard. It controls how patches get applied, defines [CodePatches](./CodePatches.md), and defines metadata about the source. To generate a new
+A shipfile is the workhorse of Shipyard. It controls how patches get applied, defines [CodePatches](./CodePatch.md), and defines metadata about the source. To generate a new
 shipfile for a source, run the following. The URL will be the path to the source repo
 ```bash
 # Init the file in this folder
