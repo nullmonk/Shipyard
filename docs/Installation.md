@@ -16,20 +16,23 @@ nav_order: 1
 </details>
 
 
-The easiest way to install Shipyard is by using pip and your package manager:
+The easiest way to install Shipyard is using pip:
+```bash
+pip install "git+https://github.com/nullmonk/shipyard"
+```
+
+To use Dagger-based builds (`shipyard build`), install with the full extras:
 ```bash
 pacman -S git
-pip install git+https://github.com/micahjmartin/shipyard
+pip install "shipyard[all] @ git+https://github.com/nullmonk/shipyard"
 ```
 
 If you would like to develop against shipyard, use the following commands as well
 
 ```bash
-pacman -S git python
-pip -r requirements.txt
-git clone --depth=1 https://github.com/micahjmartin/shipyard
+git clone --depth=1 https://github.com/nullmonk/shipyard
 cd shipyard
-pip install -e .
+pip install -e ".[all]"
 ```
 
 Ensure the pip bin is in your path, you can then run `shipyard`

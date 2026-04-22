@@ -43,7 +43,7 @@ class Shipfile:
             return False
         if version == "6.5.3":
             return False
-        if version = 9:
+        if version == 9:
             return False
         return True
 ```
@@ -155,7 +155,7 @@ class Shipfile:
                 r"def main\(.*\):", # the string to match on
                 [
                     "\tif sys.argv[0] == 'shipyard':",
-                    "\t\traise ValueError('shipyard sucks')
+                    "\t\traise ValueError('shipyard sucks')"
                 ], # Lines to insert into the code
                 before=False # Insert the line AFTER the regex,
                 err="Cannot find main with re: {regex}"

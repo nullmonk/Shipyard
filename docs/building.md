@@ -14,102 +14,93 @@ nav_order: 20
 {:toc}
 </details>
 
-Despite shipyard primarily being used for generating patches, a tool `shipyard-build` is provided for building RPM and DEB packages with Shipyard. This system uses [Earthly](https://earthly.dev) and a single (albiet complicated) [Earthfile](../Earthfile) to allow easy building of packages using a single patch file or using a Shipfile.
-
-
-## Earthly Build Process
-
-```mermaid
-flowchart LR
-    Shipyard([Shipyard])
-    p2[Patchfile]
-    Patchfile --> build
-    Shipfile ---> Shipyard
-    subgraph Earthly
-    Shipyard ---> p2
-    p2 ---> build
-    build([shipyard-build])
-    end
-    build --> RPM & DEB
-```
-
 {: .blue }
+> **Prerequisites:** Building requires the Dagger extras:
+> ```bash
+> pip install "shipyard[all] @ git+https://github.com/nullmonk/shipyard"
+> ```
 
-> For best results, set up an [Earthly satellite](https://docs.earthly.dev/earthly-cloud/satellites#getting-started) to improve build speed and save disk space
+Despite Shipyard primarily being used for generating patches, it can also be used to build packages from a Shipfile.
+Shipyard uses [Dagger](https://dagger.io) to build packages in isolated containers. This ensures debian and RPM files build across multiple linux distros.
 
+## Build Command
 
-## Building from a Shipfile (auto version control)
-
-The easiest way to build a package is using the shipfile directly. `shipyard-build` will attempt to
-automatically detect the version and generate a patchfile based on it. This method has major advantages when using Code Patches.
-
-{: .blue}
-> If there are errors with the patch generation, it might be best to use the [Second method](#building-from-a-patch-file) for building.
-
-
-If the Shipfile is fully self-contained (no patch files or included files), then only the Shipfile needs passed in to Earthly
-```bash
-earthly +build --image fedora:39 --package openssh-server --patch openssh/Shipfile.py
-```
-
-If the Shipfile uses traditional Patch files or includes other files, pass the entire diectory to Earthly
-```bash
-earthly +build --image fedora:39 --package openssh-server --patch openssh/
-```
-
-If some artifacts are not getting saved that need to be, you may use the `artifacts` flag to change which build artifacts are saved on disk
+The primary way to build a package is using the `shipyard build` command.
 
 ```bash
-# Save all artifacts matching openssh*.rpm instead of just openssh-server*.rpm
-earthly +build --image fedora:39 --package openssh-server --patch openssh/Shipfile.py --artifacts openssh
+shipyard build IMAGE PACKAGE [flags]
 ```
 
-## Building from a Patch File
+### Arguments
 
-The Earthfile included can be used to build any patch file, even if it wasn't generated with Shipyard. 
+1. `IMAGE` - The base docker image to build on. Supported distributions include:
+    - `debian:*` (e.g., `debian:bookworm`)
+    - `ubuntu:*`
+    - `rockylinux:*` (e.g., `rockylinux:9`)
+    - `centos:*` (e.g., `centos:stream9`)
+    - `fedora:*`
+    - `amazonlinux:*`
+    - `archlinux:*` (e.g. `archlinux:base-devel`)
 
-Export the version that you would like to build via shipyard:
+2. `PACKAGE` - The name of the source package to build and patch (e.g., `proftpd`, `openssh`).
+
+### Flags
+
+- `--version=VERSION`: (Optional) The version of the source code to use. Defaults to the current/latest version defined in the shipyard project.
+- `--interactive` (or `-i`): (Optional) Drop into an interactive shell inside the build container upon failure or successful completion. Useful for debugging build issues or inspecting artifacts.
+- `--artifacts=PATTERN`: (Optional) A glob pattern to filter which build artifacts are exported to the host. For example, `--artifacts="*.rpm"` or `--artifacts="proftpd-*.deb"`. If not specified, the driver's default pattern is used.
+- `--patch=PATH`: (Optional) Path to a `.patch` file, a `shipfile.py`, or a directory containing a `shipfile.py`. Allows running the build command from any directory without needing to be in the project root.
+
+## Building a Package
+
+Navigate to your shipyard project directory (where `shipfile.py` resides) and run:
+
 ```bash
-shipyard export v1.0 >> package.patch
+# Build proftpd on Debian Bookworm
+shipyard build debian:bookworm proftpd
+
+# Build proftpd on Rocky Linux 9
+shipyard build rockylinux:9 proftpd
+
+# Build proftpd on Arch Linux
+shipyard build archlinux:base-devel proftpd
 ```
 
-Build the package with the custom patch file
+### Running from Any Directory
+
+You can run the build command from any directory by specifying the `--patch` flag:
+
 ```bash
-earthly +build --image ubuntu:20.04 --package openssh-server --patch package.patch
+# Build using a specific patch file
+shipyard build rockylinux:9 proftpd --patch=/path/to/my.patch
+
+# Build using a Shipfile in another directory
+shipyard build debian:bookworm proftpd --patch=../my-project/shipfile.py
 ```
+
+### Filtering Artifacts
+
+To export only specific files, use the `--artifacts` flag:
+
+```bash
+# Export only RPM files matching "proftpd*"
+shipyard build rockylinux:9 proftpd --artifacts="proftpd*.rpm"
+```
+
+Shipyard will:
+1. Spin up a container based on the specified image.
+2. Install necessary build dependencies and tools.
+3. Fetch the source code for the specified package.
+4. Apply the patches managed by Shipyard (or the provided patch file).
+5. Build the package.
+6. Export the resulting artifacts (e.g., `.deb`, `.rpm`, `.pkg.tar.zst`) to a `build-output` directory on your host.
 
 ## Troubleshooting the Build
-When there are errors in the build process, you may hop into the container to check it out. Run the build job with `-i` enabled:
+
+If a build fails, use the `--interactive` flag to drop into a shell inside the container:
 
 ```bash
-earthly -i +build --image ubuntu:latest --package openssh-server --patch shipfile.py
+shipyard build debian:bookworm proftpd --interactive
 ```
 
-### Earthfile Arguments
-
-| Argument | Required | Description |
-| :-- | -- | :-- |
-| `image` | ✅ | Docker image to build on. Only certain images are supported but some maybe be able to be added easily. |
-| `package` | ✅ | The package to be patched and compiled against |
-| `patch` | ✅ | The patch file or Shipfile to use for patching |
-| `artifacts` | ❌ | Save build artifacts starting with this string. Defaults to `$package` |
-| `export` | ❌ | Pass `true` or `yes` to export the built docker image for inspection of errors/tests |
-| `dev` | ❌ | Install shipyard from the build context instead of from github |
-
-
-### Supported Images
-
-| Docker image | Type | Tested |
-|:--|:--|:--|
-| [`debian:12`](https://hub.docker.com/_/debian) | `deb` | ✅ Version > 9 |
-| [`ubuntu:22.04`](https://hub.docker.com/_/ubuntu) | `deb` | ✅ Version > 16.04|
-| [`centos:8`](https://hub.docker.com/_/centos) | `rpm` |  ✅ Version >= 7 |
-| [`rockylinux:9`](https://hub.docker.com/_/rockylinux) | `rpm` |  ✅ Version >= 8 |
-| [`fedora:39`](https://hub.docker.com/_/fedora) | `rpm` |  ✅ Version >= 38 |
-| [`amazonlinux:39`](https://hub.docker.com/_/amazonlinux) | `rpm` | ❌ |
-| [`linuxmintd/*:*`](https://hub.docker.com/u/linuxmintd) | `deb` | ❌ |
-| [`kalilinux/*:*`](https://hub.docker.com/u/kalilinux) | `deb` | ❌ |
-| [`archlinux:latest`](https://hub.docker.com/_/archlinux) | `pkg` | ❌ |
-
-
-## Building many images at once
+If the build fails, you will be dropped into a shell with the source code prepared and patches applied (if possible), allowing you to manually run build commands and diagnose the error. If the build succeeds, you will be dropped into a shell where you can inspect the built artifacts before they are exported.
