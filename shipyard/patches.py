@@ -19,6 +19,7 @@ from shipyard.utils import _load_object, getClosestVersions
 from shipyard.git import SourceProgram, SourceManager, GitMgr
 from shipyard.version import Version
 from shipyard.jumpstart import jumpstart
+from shipyard.code_file import CodeFile
 
 class Patches:
     """A manager for the patches that loops through a directory to figure out
@@ -245,7 +246,7 @@ class Patches:
         base = self.infoObject.resolve_source_directory()
         rel_file = file
         if file.startswith(base):
-            rel_file = file[len(base):]
+            rel_file = path.relpath(file, base)
 
         for r, funcs in self.code_res.items():
             if r.fullmatch(rel_file) or r.fullmatch(rel_file.lstrip("/")):
@@ -264,10 +265,11 @@ class Patches:
                 spec = inspect.getfullargspec(f)
                 setattr(f, "__patch_has_run", True)
 
-                if len(spec.args) > 1:
-                    f(file, Version(self._ver))
-                else:
-                    f(file) # Dont pass the version to this one
+                with CodeFile(rel_file, self.source) as cf:
+                    if len(spec.args) > 1:
+                        f(cf, Version(self._ver))
+                    else:
+                        f(cf) # Dont pass the version to this one
             except Exception as e:
                 raise ValueError(f"shipfile.{f.__name__} failed on {file}: {e}")
         return can_run_on
