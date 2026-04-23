@@ -93,11 +93,6 @@ class Patches:
             if not self.versions[version]:
                 del self.versions[version]
     
-    def get_file_list(self) -> List[str]:
-        """List files, honoring the .gitignore"""
-        self._files = self.source.list_files()
-        return self._files
-
     def apply_similar_patch(self, patch, similarversions, outdir):
         """Given patch: find other versions of the same patch and try to apply them"""
         for v in similarversions:
@@ -191,7 +186,7 @@ class Patches:
                 else:
                     print("[!] FAIL", v)
             else:
-                self.get_file_list()
+                self._files = self.source.list_files()
                 try:
                     for f in self._files:
                         self.__run_patches_on_file(f, patches=[patch])
@@ -336,7 +331,7 @@ class Patches:
 
         > Note only files modified by codepatches will be returned
         """
-        self.get_file_list()
+        self._files = self.source.list_files()
 
         # Call the pre_patch hook
         if self.infoObject.pre_patches and callable(self.infoObject.pre_patches):
