@@ -32,24 +32,26 @@ class Patches:
         self.versions = {}
         self.infoObject: SourceProgram
         self._files = [] # List of all files in the source
+        self._pull = pull
+        self._ver = ""
         self.load()
 
+    async def prepare(self):
         # Jumpstart the URLs into a git repo _before_ passing to the git MGR
         if not self.infoObject.Url and self.infoObject.Urls:
             jumpstart(self.infoObject.resolve_source_directory(), self.infoObject.Urls)
         # If we wanted, we could use a different source manager here
-        self.source:SourceManager = GitMgr(self.infoObject)
+        if not hasattr(self, "source") or self.source is None:
+            self.source:SourceManager = GitMgr(self.infoObject)
 
-        if pull:
-            self.source.prepare()
-            self._ver = self.infoObject.tag_to_version(self.source.version())
-        else:
-            self._ver = ""
+        if self._pull:
+            await self.source.prepare()
+            self._ver = self.infoObject.tag_to_version(await self.source.version())
 
-    def _checkout(self, version):
+    async def _checkout(self, version):
         """Checkout a version"""
-        self.source.reset()
-        self.source.checkout(Version(version))
+        await self.source.reset()
+        await self.source.checkout(Version(version))
         self._ver = version
 
     def _load_code_patch(self, cp):
@@ -125,7 +127,7 @@ class Patches:
                     self._files.append(f)
         return self._files
 
-    def apply_similar_patch(self, patch, similarversions, outdir):
+    async def apply_similar_patch(self, patch, similarversions, outdir):
         """Given patch: find other versions of the same patch and try to apply them"""
         for v in similarversions:
             # Get the patch that has the same name for the version
@@ -134,8 +136,8 @@ class Patches:
                 continue
             p = p[0]
             try:
-                self.source.apply(p)
-                contents = self.source.refresh(p)
+                await self.source.apply(p)
+                contents = await self.source.refresh(p)
                 _, fname = path.split(p.Filename)
                 out = path.join(self._dir, self.infoObject.Patches, v, fname)
                 with open(path.join(out), "w") as f:
@@ -146,12 +148,12 @@ class Patches:
                 print(E)
                 continue
         # Could not find a similar patch
-        self.source.reset()
+        await self.source.reset()
         return False
 
-    def patch_version(self, version):
+    async def patch_version(self, version):
         """Patch a version with all the patches from a previous version"""
-        actualVers = self.source.versions()
+        actualVers = await self.source.versions()
         if not self.patches:
             print(f"[!] WARNING: No patchfiles found for '{self.infoObject.Name}'")
             return
@@ -177,11 +179,11 @@ class Patches:
             print(f"[*] Attempting to patch {version} with {len(patches)} patches from version {closestVers[0]}")
             outdir = path.join(self._dir, self.infoObject.Patches, version)
             makedirs(outdir, exist_ok=True)
-        self._checkout(version)
+        await self._checkout(version)
         for p in patches:
             try:
-                self.source.apply(p)
-                contents = self.source.refresh(p)
+                await self.source.apply(p)
+                contents = await self.source.refresh(p)
                 _, fname = path.split(p.Filename)
                 output = path.join(outdir, fname)
                 if path.exists(output):
@@ -192,26 +194,26 @@ class Patches:
             except Exception as e:
                 print(e)
                 continue
-                self.source.reset()
+                await self.source.reset()
                 # Fall back to trying every similar patch
-                if not self.apply_similar_patch(p, closestVers, outdir):
+                if not await self.apply_similar_patch(p, closestVers, outdir):
                     print("[!] Failed to find a valid patch for", p.Name)
         if patches:
             print("[+] Saved patches to", outdir)
 
-    def test_patch(self, patch: PatchFile):
+    async def test_patch(self, patch: PatchFile):
         """Test a patchfile on all versions of a source code"""
         is_code_patch = not isinstance(patch, PatchFile)
         if is_code_patch:
             if patch not in self.code_patches:
                 raise FileNotFoundError(f"code patch '{patch}' not found")
         
-        versions = self.source.versions()
+        versions = await self.source.versions()
         for v in versions:
             if len(versions) > 1:
-                self._checkout(v)
+                await self._checkout(v)
             if not is_code_patch:
-                if self.source.apply(patch, check=True):
+                if await self.source.apply(patch, check=True):
                     print("[+] PASS", v)
                 else:
                     print("[!] FAIL", v)
@@ -219,12 +221,12 @@ class Patches:
                 self.get_file_list()
                 try:
                     for f in self._files:
-                        self.__run_patches_on_file(f, patches=[patch])
+                        await self.__run_patches_on_file(f, patches=[patch])
                     print("[+] PASS", v)
                 except Exception as e:
                     print(f"[!] FAIL {v}: {e}")
     
-    def apply_code_patches(self, patches=[]):
+    async def apply_code_patches(self, patches=[]):
         for funcs in self.code_res.values():
             # Reset the run check
             for f in funcs:
@@ -232,13 +234,13 @@ class Patches:
         cfs = set()
         files = set()
         for f in self._files:
-            cf = self.__run_patches_on_file(f, patches=patches)
+            cf = await self.__run_patches_on_file(f, patches=patches)
             if cf:
                 cfs.update(cf)
                 files.add(f)
         return cfs, files
 
-    def __run_patches_on_file(self, file, patches=[]) -> set():
+    async def __run_patches_on_file(self, file, patches=[]) -> set():
         """Run all eligable (within an optional subset) CodePatches on the given file"""
         can_run_on = set()
         r: re.Pattern
@@ -265,42 +267,48 @@ class Patches:
                 spec = inspect.getfullargspec(f)
                 setattr(f, "__patch_has_run", True)
 
-                with CodeFile(rel_file, self.source) as cf:
-                    if len(spec.args) > 1:
-                        f(cf, Version(self._ver))
+                async with CodeFile(rel_file, self.source) as cf:
+                    if inspect.iscoroutinefunction(f):
+                        if len(spec.args) > 1:
+                            await f(cf, Version(self._ver))
+                        else:
+                            await f(cf) # Dont pass the version to this one
                     else:
-                        f(cf) # Dont pass the version to this one
+                        if len(spec.args) > 1:
+                            f(cf, Version(self._ver))
+                        else:
+                            f(cf) # Dont pass the version to this one
             except Exception as e:
                 raise ValueError(f"shipfile.{f.__name__} failed on {file}: {e}")
         return can_run_on
 
-    def validate_version(self, version: str):
+    async def validate_version(self, version: str):
         """Validate that a version is compatible with all the patches we have for it"""
         if version not in self.versions:
             raise ValueError("No patches found for version " + version)
-        self._checkout(version)
+        await self._checkout(version)
         try:
             for p in self.versions[version]:
-                self.source.apply(p)
+                await self.source.apply(p)
             print("[+] All patches successfully applied")
         finally:
-            self.source.reset()
+            await self.source.reset()
 
 
-    def export(self, version="") -> str:
+    async def export(self, version="") -> str:
         """Apply all patches and CodePatches to a version and dump out a new patchfile with all the changes"""
-        vers = self.source.versions()
+        vers = await self.source.versions()
         if not version:
             if vers:
                 version = vers[-1]
             else:
                 raise ValueError("No versions found to export")
         
-        self._checkout(version)
+        await self._checkout(version)
 
-        patches, _ = self.patch(self.versions.get(version, []))
+        patches, _ = await self.patch(self.versions.get(version, []))
         new_patch = f"{self.infoObject.Name} {version}\n"
-        new_patch += self.source.refresh()
+        new_patch += await self.source.refresh()
 
         # Sub all the vars
         for k, v in self.infoObject.Variables.items():
@@ -358,7 +366,7 @@ class Patches:
             patch = patch.replace(k, v)
         return patch
 
-    def patch(self, patches=[], codepatches=[]) -> "tuple[set, set]":
+    async def patch(self, patches=[], codepatches=[]) -> "tuple[set, set]":
         """Patch source_dir with the given patches and the given codepatches
         
         Return: patches_run, files_changed
@@ -371,10 +379,10 @@ class Patches:
         if self.infoObject.pre_patches and callable(self.infoObject.pre_patches):
             self.infoObject.pre_patches()
 
-        run_patches, files = self.apply_code_patches(codepatches)
+        run_patches, files = await self.apply_code_patches(codepatches)
         patch: PatchFile
         for patch in patches:
-            self.source.apply(patch)
+            await self.source.apply(patch)
             run_patches.add(patch.Name)
 
         #Ensure that all required codepatches have run
@@ -389,7 +397,7 @@ class Patches:
 
         return run_patches, files
 
-    def dump(self):
+    async def dump(self):
         print("patches versions:", list(self.versions.keys()))
         print("\npatches:", list(self.patches.keys()))
-        print("\nmissing version patches:", [v for v in self.source.versions() if v not in self.versions])
+        print("\nmissing version patches:", [v for v in await self.source.versions() if v not in self.versions])

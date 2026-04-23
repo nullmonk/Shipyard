@@ -5,6 +5,7 @@ Primary CLI
 import os
 import sys
 import fire
+import anyio
 
 from shipyard.patches import Patches
 from shipyard.patch import PatchFile
@@ -16,7 +17,7 @@ class ShipyardCLI:
         """Maintain a group of patches against a source repository"""
         self.dir = directory
     
-    def _load(self) -> Patches:
+    async def _load(self) -> Patches:
         # @TODO: Search any python files in the current dir for valid Shipfile objects
         # TODO: Search any python files in the current dir
         path = os.path.join(self.dir, "shipfile.py")
@@ -30,7 +31,9 @@ class ShipyardCLI:
             if os.path.exists(path):
                 # Detected a shipyard file in the current dir, assume this is the patch folder
                 d, _ = os.path.split(path)
-                return Patches(d)
+                p = Patches(d)
+                await p.prepare()
+                return p
             #except Exception as e:
                 #print(f"[!] Detected a shipyard.py file. But there were errors loading it: {e}", file=sys.stderr)
                 #exit(127)
@@ -44,12 +47,14 @@ class ShipyardCLI:
         url: URL to a git repository with the source code
         name: override the name of the project (default repository name)
         """
-        try:
-            new_project(self.dir, url, name)
-            self._load()
-        except Exception as e:
-            print(e, file=sys.stderr)
-            exit(127)
+        async def _init():
+            try:
+                new_project(self.dir, url, name)
+                await self._load()
+            except Exception as e:
+                print(e, file=sys.stderr)
+                exit(127)
+        anyio.run(_init)
 
     def jumpstart(self):
         """Download multiple URLs to create a properly tagged git repo."""
@@ -57,17 +62,19 @@ class ShipyardCLI:
 
     def versions(self):
         """List the versions of the source code. Denoting which versions have patches"""
-        p = self._load()
-        print(f"versions of {p.infoObject.Name}")
-        for v in p.source.versions():
-            # Print tag aswell as version
-            t = p.infoObject.version_to_tag(v)
-            if t != v:
-                t = f"{v} - tags/{t}"
-            if v in p.versions:
-                print(f"{t} - {len(p.versions[v])} patches")
-            else:
-                print(t)
+        async def _versions():
+            p = await self._load()
+            print(f"versions of {p.infoObject.Name}")
+            for v in await p.source.versions():
+                # Print tag aswell as version
+                t = p.infoObject.version_to_tag(v)
+                if t != v:
+                    t = f"{v} - tags/{t}"
+                if v in p.versions:
+                    print(f"{t} - {len(p.versions[v])} patches")
+                else:
+                    print(t)
+        anyio.run(_versions)
 
     def import_patch(self, name, description=""):
         """import a new patchfile
@@ -75,6 +82,8 @@ class ShipyardCLI:
         This patch can later be applied to multiple versions of the source
         
         Example: git diff file.c | shipyard import mypatch "this is an awesome patchfile" """
+        # We don't actually use _load here, so it should be fine.
+        # But for consistency and to avoid future issues:
         buf = sys.stdin.read()
         buf = buf.strip()
         if not buf:
@@ -98,60 +107,72 @@ class ShipyardCLI:
     
     def test_patch(self, patchfile):
         """Test a patch file against all versions"""
-        p = self._load()
-        patch = patchfile
-        if patchfile not in p.code_patches:
+        async def _test():
+            p = await self._load()
+            patch = patchfile
+            if patchfile not in p.code_patches:
+                try:
+                    patch = PatchFile.from_file(patchfile)
+                except Exception as e:
+                    print("[!] Could not load patchfile or CodePatch:", e, file=sys.stderr)
+                    exit(127)
             try:
-                patch = PatchFile.from_file(patchfile)
+                await p.test_patch(patch)
             except Exception as e:
-                print("[!] Could not load patchfile or CodePatch:", e, file=sys.stderr)
+                print("[!] Checkout branch:", e, file=sys.stderr)
                 exit(127)
-        try:
-            p.test_patch(patch)
-        except Exception as e:
-            print("[!] Checkout branch:", e, file=sys.stderr)
-            exit(127)
+        anyio.run(_test)
     
     def build_version(self, version):
         """Build a patch for a new version. This will use all existing patch files to try and create a version"""
-        p = self._load()
-        p.patch_version(version)
+        async def _build():
+            p = await self._load()
+            await p.patch_version(version)
+        anyio.run(_build)
 
     def export(self, version):
         """Export the version into a single patchfile"""
-        p = self._load()
-        try:
-            res, patches = p.export(version)
-        except Exception as e:
-            print("[!]", e)
-            quit(1)
-        print(res)
+        async def _export():
+            p = await self._load()
+            try:
+                res, patches = await p.export(version)
+                print(res)
+            except Exception as e:
+                print("[!]", e)
+                quit(1)
+        anyio.run(_export)
     
     def list_source_files(self):
         """List all files of the source that are not in the gitignore"""
-        p = self._load()
-        p.get_file_list()
-        for f in p._files:
-            print(f)
+        async def _list():
+            p = await self._load()
+            p.get_file_list()
+            for f in p._files:
+                print(f)
+        anyio.run(_list)
     
     def apply_code_patches(self, patches=[]):
         """Apply all the code patches to the current source"""
-        p = self._load()
-        p.get_file_list()
-        try:
-            code_funcs, _ =  p.apply_code_patches()
-            for cf in code_funcs:
-                print(f"[+] applied {cf.__name__}")
-        except Exception as e:
-            print("[!]", e)
+        async def _apply():
+            p = await self._load()
+            p.get_file_list()
+            try:
+                code_funcs, _ =  await p.apply_code_patches()
+                for cf in code_funcs:
+                    print(f"[+] applied {cf.__name__}")
+            except Exception as e:
+                print("[!]", e)
+        anyio.run(_apply)
 
     def checkout(self, version=""):
         """Checkout the given version of the source. If not version is given it will reset the
         source back to the original state of the current version"""
-        p = self._load()
-        p.source.reset()
-        if version:
-            p.source.checkout(Version(version))
+        async def _checkout():
+            p = await self._load()
+            await p.source.reset()
+            if version:
+                await p.source.checkout(Version(version))
+        anyio.run(_checkout)
 
     def build(self, image=None, package=None, version="", patch=None, interactive=False, artifacts=None, output=None, i=False, p=None):
         """Build a package using Dagger orchestration.
@@ -237,27 +258,44 @@ class ShipyardCLI:
 
         # Resolve version if empty
         resolved_version = version
-        if not resolved_version and p:
-            try:
-                vers = p.source.versions()
-                if vers:
-                    resolved_version = str(vers[-1])
-            except Exception:
-                pass
 
-        # Generate patch content if we haven't already (from Shipfile)
-        if not patch_content:
+        async def _resolve_and_export():
+            nonlocal resolved_version, patch_content, p
+
             if p:
-                print(f"[*] Preparing patch for {pkg_name}...")
-                try:
-                    patch_content, _ = p.export(version)
-                except Exception as e:
-                    print(f"[!] Failed to export patch: {e}", file=sys.stderr)
-                    exit(1)
+                await p.prepare()
             else:
-                # Should have been caught by "Package name not specified" or loading logic, but just in case
-                print("[!] Error: No patch content available. Provide a .patch file or a valid Shipfile.", file=sys.stderr)
-                exit(1)
+                # Default behavior: try to find shipfile in current/parent dirs
+                try:
+                    p = await self._load()
+                except Exception:
+                    # If we can't load a shipfile and no patch is provided, we can't proceed unless user provided a patch file
+                    pass
+
+            if not resolved_version and p:
+                try:
+                    vers = await p.source.versions()
+                    if vers:
+                        resolved_version = str(vers[-1])
+                except Exception:
+                    pass
+
+            # Generate patch content if we haven't already (from Shipfile)
+            if not patch_content:
+                if p:
+                    print(f"[*] Preparing patch for {pkg_name}...")
+                    try:
+                        patch_content, _ = await p.export(resolved_version)
+                    except Exception as e:
+                        print(f"[!] Failed to export patch: {e}", file=sys.stderr)
+                        exit(1)
+
+        anyio.run(_resolve_and_export)
+
+        if not patch_content:
+            # Should have been caught by "Package name not specified" or loading logic, but just in case
+            print("[!] Error: No patch content available. Provide a .patch file or a valid Shipfile.", file=sys.stderr)
+            exit(1)
         
         # Determine output directory
         if output:
@@ -270,15 +308,18 @@ class ShipyardCLI:
             output_dir = "build-output"
 
         print(f"[*] Starting build for {pkg_name} on {image}...")
-        anyio.run(
-            build_package,
-            image or "",
-            pkg_name or "",
-            patch_content or "",
-            output_dir or "",
-            bool(interactive),
-            artifacts or ""
-        )
+        async def _build_package():
+            await build_package(
+                image or "",
+                pkg_name or "",
+                patch_content or "",
+                output_dir or "",
+                bool(interactive),
+                artifacts or "",
+                os.path.abspath(p._dir) if p else ".",
+                resolved_version or ""
+            )
+        anyio.run(_build_package)
 
 
 def run():

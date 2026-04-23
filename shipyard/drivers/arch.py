@@ -61,6 +61,15 @@ class ArchDriver(DistroDriver):
     def get_artifact_dir(self) -> str:
         return "/tmp/build/artifacts"
 
+    async def get_source_dir(self, container: dagger.Container, package: str) -> str:
+        # After makepkg -o, source is in /tmp/build/<package>/src/<pkgname>-<version>
+        source_base = f"/tmp/build/{package}/src"
+        out = await container.with_workdir(source_base).with_exec(["ls", "-F"]).stdout()
+        for line in out.splitlines():
+            if line.endswith("/"):
+                return f"{source_base}/{line.rstrip('/')}"
+        return source_base
+
     # Override build to move artifacts
     def build(self, container: dagger.Container, package: str) -> dagger.Container:
         return (

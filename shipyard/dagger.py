@@ -6,28 +6,38 @@ from shipyard.sources import SourceManager
 from shipyard.patch import PatchFile
 
 class DaggerMgr(SourceManager):
-    def __init__(self, container: dagger.Container, path: str, version: str = "latest") -> None:
+    def __init__(self, container: dagger.Container, path: str = "", version: str = "latest") -> None:
         self.base_container = container
         self.container = container
         self.path = path
         self._version = version
 
-    def read(self, path: str):
-        full_path = os.path.join(self.path, path)
-        async def _read():
-            return await self.container.file(full_path).contents()
+    async def _get_path(self) -> str:
+        if self.path:
+            return self.path
 
-        return anyio.run(_read)
+        # Try to read from SHIPYARD_SOURCE env in container
+        env = await self.container.env_variables()
+        for e in env:
+            if await e.name() == "SHIPYARD_SOURCE":
+                self.path = await e.value()
+                return self.path
 
-    def write(self, path: str, contents) -> None:
-        full_path = os.path.join(self.path, path)
-        self.container = self.container.with_new_file(full_path, contents)
+        raise ValueError("No path provided and SHIPYARD_SOURCE not set in container")
 
-    def list_files(self) -> List[str]:
-        async def _list():
-            return await self.container.with_workdir(self.path).with_exec(["find", ".", "-type", "f"]).stdout()
+    async def read(self, path: str):
+        workdir = await self._get_path()
+        full_path = os.path.join(workdir, path)
+        return await self.container.file(full_path).contents()
 
-        out = anyio.run(_list)
+    async def write(self, path: str, contents) -> None:
+        workdir = await self._get_path()
+        full_path = os.path.join(workdir, path)
+        self.container = await self.container.with_new_file(full_path, contents).sync()
+
+    async def list_files(self) -> List[str]:
+        workdir = await self._get_path()
+        out = await self.container.with_workdir(workdir).with_exec(["find", ".", "-type", "f"]).stdout()
         return [f[2:] if f.startswith("./") else f for f in out.splitlines() if f]
 
     def version(self) -> str:
@@ -36,31 +46,38 @@ class DaggerMgr(SourceManager):
     def versions(self) -> List[str]:
         return [self._version]
 
-    def checkout(self, version: str) -> None:
+    async def checkout(self, version: str) -> None:
         self.reset()
 
     def reset(self) -> None:
         self.container = self.base_container
 
-    def apply(self, patch: PatchFile):
+    async def apply(self, patch: PatchFile, reject=True, check=False):
+        workdir = await self._get_path()
         patch_path = os.path.join("/tmp", f"{patch.Name}.patch")
         self.container = self.container.with_new_file(patch_path, patch.dump())
 
-        async def _apply():
-            return await (
+        args = ["git", "apply"]
+        if reject:
+            args.append("--reject")
+        args.append(patch_path)
+
+        try:
+            self.container = await (
                 self.container
-                .with_workdir(self.path)
-                .with_exec(["git", "apply", "--reject", patch_path])
+                .with_workdir(workdir)
+                .with_exec(args)
                 .sync()
             )
+        except Exception as e:
+            if check:
+                return False
+            raise e
+        return True
 
-        self.container = anyio.run(_apply)
-
-    def refresh(self, patch: PatchFile = None):
-        async def _refresh():
-            args = ["git", "diff"]
-            if patch:
-                args.append(patch.Index)
-            return await self.container.with_workdir(self.path).with_exec(args).stdout()
-
-        return anyio.run(_refresh)
+    async def refresh(self, patch: PatchFile = None):
+        workdir = await self._get_path()
+        args = ["git", "diff"]
+        if patch:
+            args.append(patch.Index)
+        return await self.container.with_workdir(workdir).with_exec(args).stdout()
