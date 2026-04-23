@@ -2,6 +2,7 @@ import sys
 import dagger
 import os
 import re
+import anyio
 from shipyard.drivers.debian import DebianDriver
 from shipyard.drivers.rpm import RPMDriver
 from shipyard.drivers.arch import ArchDriver
@@ -31,35 +32,34 @@ async def build_package(image: str, package: str, patch_content: str, output_dir
             ctr = driver.install_build_deps(ctr, package)
             ctr = driver.prepare_source(ctr, package)
 
-            # Initialize Patches and DaggerMgr
-            p = Patches(shipyard_dir)
-
             source_dir = await driver.get_source_dir(ctr, package)
 
             # Set SHIPYARD_SOURCE env in container
             ctr = ctr.with_env_variable("SHIPYARD_SOURCE", source_dir)
 
-            p.source = DaggerMgr(ctr)
-            await p.prepare()
+            # Use Patches in a separate thread because it's synchronous but DaggerMgr uses anyio.from_thread.run
+            def _patch_source(shipyard_dir, ctr, version, source_dir):
+                p = Patches(shipyard_dir)
+                p.source = DaggerMgr(ctr, path=source_dir)
 
-            # Resolve version if needed
-            resolved_version = version
-            if not resolved_version:
-                vers = await p.source.versions()
-                if vers:
-                    resolved_version = str(vers[-1])
+                # Resolve version if needed
+                resolved_version = version
+                if not resolved_version:
+                    vers = p.source.versions()
+                    if vers:
+                        resolved_version = str(vers[-1])
 
-            if resolved_version:
-                print(f"[*] Resolved version to {resolved_version}")
-                await p._checkout(resolved_version)
+                if resolved_version:
+                    print(f"[*] Resolved version to {resolved_version}")
+                    p._checkout(resolved_version)
 
-            # Apply patches (both file-based and code-based)
-            print(f"[*] Applying patches to {package} source in container...")
-            relevant_patches = p.versions.get(Version(resolved_version), []) if resolved_version else []
-            await p.patch(patches=relevant_patches)
+                # Apply patches (both file-based and code-based)
+                print(f"[*] Applying patches to {package} source in container...")
+                relevant_patches = p.versions.get(Version(resolved_version), []) if resolved_version else []
+                p.patch(patches=relevant_patches)
+                return p.source.container
 
-            # Update container with modified source
-            ctr = p.source.container
+            ctr = await anyio.to_thread.run_sync(_patch_source, shipyard_dir, ctr, version, source_dir)
 
             # If patch_content was provided from CLI (and it's not empty), apply it using the driver
             # This allows user-provided .patch files to work alongside Shipfile patches

@@ -72,42 +72,42 @@ class SourceManager:
     """An object that makes sure the source code is in the right place at the right
     time. Currently we are only using git but we could extend this here if there was
     type needed"""
-    async def prepare(self):
+    def prepare(self):
         """Ensure we have the source code when we need it"""
         raise NotImplementedError()
 
-    async def version(self) -> str:
+    def version(self) -> str:
         """Return the current version of the source code"""
         raise NotImplementedError()
 
-    async def versions(self) -> List[str]:
+    def versions(self) -> List[str]:
         """Return all the versions of the source code that we have"""
         raise NotImplementedError()
 
-    async def checkout(self, version: str) -> None:
+    def checkout(self, version: str) -> None:
         """Use a specific version"""
         raise NotImplementedError()
 
-    async def refresh(self, p: PatchFile):
+    def refresh(self, p: PatchFile):
         """refresh a patch"""
         raise NotImplementedError()
 
-    async def apply(self, patch: PatchFile, reject=True, check=False):
+    def apply(self, patch: PatchFile, reject=True, check=False):
         """Apply a patch to the current source"""
         raise NotImplementedError()
     
-    async def reset(self) -> None:
+    def reset(self) -> None:
         """Reset the source after changes were made"""
         raise NotImplementedError()
 
-    async def read(self, path: str):
+    def read(self, path: str):
         """Read a file from the source"""
         raise NotImplementedError()
 
-    async def write(self, path: str, contents) -> None:
+    def write(self, path: str, contents) -> None:
         """Write a file to the source"""
         raise NotImplementedError()
 
-    async def list_files(self) -> List[str]:
+    def list_files(self) -> List[str]:
         """List all files in the source"""
         raise NotImplementedError()

@@ -1,36 +1,24 @@
 import re
 from io import StringIO
 
-import anyio
-import inspect
-
 class CodeFile:
     def __init__(self, fname, source_mgr):
         self.name = fname
         self.source_mgr = source_mgr
-        self.contents = ""
-
-    async def __aenter__(self):
-        data = await self.source_mgr.read(self.name)
+        data = self.source_mgr.read(fname)
         if isinstance(data, bytes):
             self.contents = data.decode('utf8', 'replace')
         else:
             self.contents = data
+
+    def __enter__(self):
         return self
 
-    async def __aexit__(self, exc_type, exc_value, traceback):
+    def __exit__(self, exc_type, exc_value, traceback):
         if exc_type:
             return # Dont write on exits
 
-        await self.source_mgr.write(self.name, self.contents)
-
-    def __enter__(self):
-        # Bridging for synchronous usage
-        return anyio.run(self.__aenter__)
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        # Bridging for synchronous usage
-        anyio.run(self.__aexit__, exc_type, exc_value, traceback)
+        self.source_mgr.write(self.name, self.contents)
 
     def close(self):
         self.__exit__(None, None, None)
