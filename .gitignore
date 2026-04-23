@@ -3,6 +3,7 @@ openssh-server/*
 *.diff
 *.patch
 shipfile.py
+!examples/proftpd/shipfile.py
 
 logs/*
 
