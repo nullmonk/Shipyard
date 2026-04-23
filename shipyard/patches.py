@@ -24,13 +24,14 @@ from shipyard.code_file import CodeFile
 class Patches:
     """A manager for the patches that loops through a directory to figure out
     each version supported and that patches that we have for each one"""
-    def __init__(self, directory=".", pull=True):
+    def __init__(self, directory=".", pull=True, shipfile=""):
         self._dir = directory
+        self._shipfile = shipfile
         self.patches = {}
         self.code_patches = {} # Patches that are functions and not .patch files
         self.code_res = defaultdict(list) # when a file matches an RE in this array, goto the func it points to
         self.versions = {}
-        self.infoObject: SourceProgram
+        self.infoObject: SourceProgram = None
         self._files = [] # List of all files in the source
         self.load()
 
@@ -62,7 +63,16 @@ class Patches:
     def load(self):
         """Load and parse the shipfile as well as the patches"""
         # Load the object class
-        for f in glob.glob(path.join(self._dir, "*.py")):
+        files = []
+        if self._shipfile:
+            if path.isabs(self._shipfile):
+                files = [self._shipfile]
+            else:
+                files = [path.join(self._dir, self._shipfile)]
+        else:
+            files = glob.glob(path.join(self._dir, "*.py"))
+
+        for f in files:
             obj = _load_object(f)
             if obj is not None:
                 self.infoObject = SourceProgram.from_object(obj)

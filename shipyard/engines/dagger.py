@@ -10,7 +10,7 @@ from shipyard.patches import Patches
 from shipyard.dagger import DaggerMgr
 from shipyard.version import Version
 
-async def build_package(image: str, package: str, patch_content: str, output_dir: str = "builds", interactive: bool = False, artifacts: str = "", shipyard_dir: str = ".", version: str = ""):
+async def build_package(image: str, package: str, patch_content: str, output_dir: str = "builds", interactive: bool = False, artifacts: str = "", shipyard_dir: str = "", version: str = "", shipfile: str = "", variables: dict = {}):
     async with dagger.Connection(dagger.Config(log_output=sys.stderr)) as client:
         # Determine driver
         if any(x in image for x in ["debian", "ubuntu", "linuxmint", "kali"]):
@@ -37,35 +37,50 @@ async def build_package(image: str, package: str, patch_content: str, output_dir
             # Set SHIPYARD_SOURCE env in container
             ctr = ctr.with_env_variable("SHIPYARD_SOURCE", source_dir)
 
+            exported_patch = ""
             # Use Patches in a separate thread because it's synchronous but DaggerMgr uses anyio.from_thread.run
-            def _patch_source(shipyard_dir, ctr, version, source_dir):
-                p = Patches(shipyard_dir)
-                p.source = DaggerMgr(ctr, path=source_dir)
+            def _export_patch(shipyard_dir, ctr, version, source_dir, shipfile, variables):
+                if not shipyard_dir:
+                    return ""
+                try:
+                    p = Patches(shipyard_dir, pull=False, shipfile=shipfile)
+                    p.source = DaggerMgr(ctr, path=source_dir)
 
-                # Resolve version if needed
-                resolved_version = version
-                if not resolved_version:
-                    vers = p.source.versions()
-                    if vers:
-                        resolved_version = str(vers[-1])
+                    if variables:
+                        p.infoObject.Variables.update(variables)
 
-                if resolved_version:
-                    print(f"[*] Resolved version to {resolved_version}")
-                    p._checkout(resolved_version)
+                    # Resolve version if needed
+                    resolved_version = version
+                    if not resolved_version:
+                        vers = p.source.versions()
+                        if vers:
+                            resolved_version = str(vers[-1])
 
-                # Apply patches (both file-based and code-based)
-                print(f"[*] Applying patches to {package} source in container...")
-                relevant_patches = p.versions.get(Version(resolved_version), []) if resolved_version else []
-                p.patch(patches=relevant_patches)
-                return p.source.container
+                    if resolved_version:
+                        print(f"[*] Resolved version to {resolved_version}")
 
-            ctr = await anyio.to_thread.run_sync(_patch_source, shipyard_dir, ctr, version, source_dir)
+                    # Apply patches (both file-based and code-based) and export
+                    print(f"[*] Exporting patches for {package} in container...")
+                    patch, _ = p.export(resolved_version)
+                    return patch
+                except Exception as e:
+                    print(f"[!] Error exporting patch from Shipfile: {e}", file=sys.stderr)
+                    raise e
 
-            # If patch_content was provided from CLI (and it's not empty), apply it using the driver
-            # This allows user-provided .patch files to work alongside Shipfile patches
+            exported_patch = await anyio.to_thread.run_sync(_export_patch, shipyard_dir, ctr, version, source_dir, shipfile, variables)
+
+            # Combine patches
+            final_patch = exported_patch
             if patch_content:
-                print(f"[*] Applying custom patch content...")
-                ctr = await driver.apply_patch(ctr, patch_content, package)
+                if final_patch:
+                    final_patch += "\n" + patch_content
+                else:
+                    final_patch = patch_content
+
+            # If we have patch content, apply it using the driver
+            if final_patch:
+                print(f"[*] Applying patches to {package}...")
+                ctr = await driver.apply_patch(ctr, final_patch, package)
 
             ctr_pre_build = ctr
             ctr = driver.build(ctr, package)

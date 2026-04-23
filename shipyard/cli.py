@@ -156,7 +156,7 @@ class ShipyardCLI:
         if version:
             p.source.checkout(Version(version))
 
-    def build(self, image=None, package=None, version="", patch=None, interactive=False, artifacts=None, output=None, i=False, p=None):
+    def build(self, image=None, package=None, version="", patch=None, interactive=False, artifacts=None, output=None, i=False, p=None, **kwargs):
         """Build a package using Dagger orchestration.
         
         image: The base image to build on (e.g. debian:bookworm, rockylinux:9)
@@ -173,6 +173,8 @@ class ShipyardCLI:
         if p and not patch:
             patch = p
 
+        variables = kwargs
+
         if image is None or image.startswith("-"):
             print("[!] Error: Image name is required and cannot start with a hyphen.", file=sys.stderr)
             print("    Usage: shipyard build <image> [package] [--patch <path>] [--interactive]", file=sys.stderr)
@@ -188,6 +190,7 @@ class ShipyardCLI:
 
         p = None
         patch_content = ""
+        shipfile_path = ""
         
         if patch:
             if os.path.isfile(patch):
@@ -202,9 +205,10 @@ class ShipyardCLI:
                 elif patch.endswith(".py"):
                     # Assume it points to a Shipfile.py
                     directory = os.path.dirname(os.path.abspath(patch))
-                    print(f"[*] Loading Shipfile from {directory}")
+                    shipfile_path = os.path.abspath(patch)
+                    print(f"[*] Loading Shipfile {shipfile_path} from {directory}")
                     try:
-                        p = Patches(directory)
+                        p = Patches(directory, shipfile=shipfile_path)
                     except Exception as e:
                         print(f"[!] Failed to load shipfile {patch}: {e}", file=sys.stderr)
                         exit(1)
@@ -290,8 +294,10 @@ class ShipyardCLI:
             output_dir or "",
             bool(interactive),
             artifacts or "",
-            os.path.abspath(p._dir) if p else ".",
-            resolved_version or ""
+            os.path.abspath(p._dir) if p else "",
+            resolved_version or "",
+            shipfile_path,
+            variables
         )
 
 
