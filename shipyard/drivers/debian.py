@@ -7,6 +7,25 @@ class DebianDriver(DistroDriver):
             container
             #TODO Can I pull the timezone from the local environment here?
             .with_exec(["ln", "-fs", "/usr/share/zoneinfo/America/New_York", "/etc/localtime"])
+            # For EOL Debian releases (buster and older), deb.debian.org no longer hosts
+            # Release files — rewrite sources to archive.debian.org before anything else.
+            .with_exec([
+                "/bin/bash", "-c",
+                ". /etc/os-release; "
+                "case \"${VERSION_CODENAME:-}\" in "
+                "  buster|stretch|jessie|wheezy|squeeze) "
+                "    printf 'deb http://archive.debian.org/debian %s main\\n"
+                "deb-src http://archive.debian.org/debian %s main\\n"
+                "deb http://archive.debian.org/debian-security %s/updates main\\n"
+                "deb-src http://archive.debian.org/debian-security %s/updates main\\n' "
+                "      \"$VERSION_CODENAME\" \"$VERSION_CODENAME\" "
+                "      \"$VERSION_CODENAME\" \"$VERSION_CODENAME\" > /etc/apt/sources.list; "
+                "    echo 'Acquire::Check-Valid-Until \"false\";' "
+                "      > /etc/apt/apt.conf.d/99no-check-valid-until; "
+                "    find /etc/apt/sources.list.d -type f -delete 2>/dev/null || true; "
+                "    ;; "
+                "esac"
+            ])
             # Ensure source repos (Handle both legacy sources.list and modern sources.list.d)
             .with_exec([
                 "/bin/bash", "-c",
@@ -20,7 +39,7 @@ class DebianDriver(DistroDriver):
             ])
             # Newer ubuntus install the sources here instead of in sources.list
             .with_exec(["find", "/etc/apt/sources.list.d", "-type", "f", "-exec", "sed", "-i", "s/Types:/Types: deb-src/", "{}", ";"])
-            
+
             .with_exec(["apt-get", "update", "-qq"])
             .with_exec([
                 "apt-get", "install", "-qq", "-y",
