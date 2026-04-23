@@ -38,7 +38,7 @@ class RPMDriver(DistroDriver):
             .with_exec([
                 "yum", "install", "-y",
                 "gcc", "rpmdevtools", "yum-utils", "make",
-                "nc", "vim", "python3", "python3-pip", "git"
+                "nc", "vim", "git"
             ])
         )
 
@@ -163,3 +163,11 @@ class RPMDriver(DistroDriver):
 
     def get_artifact_dir(self) -> str:
         return "/tmp/build/RPMS"
+
+    async def get_source_dir(self, container: dagger.Container, package: str) -> str:
+        # After rpmbuild -bp, source is in /tmp/build/BUILD/<pkg>-<version>
+        out = await container.with_workdir("/tmp/build/BUILD").with_exec(["ls", "-F"]).stdout()
+        for line in out.splitlines():
+            if line.endswith("/"):
+                return f"/tmp/build/BUILD/{line.rstrip('/')}"
+        return "/tmp/build/BUILD"

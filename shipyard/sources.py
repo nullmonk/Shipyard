@@ -92,7 +92,7 @@ class SourceManager:
         """refresh a patch"""
         raise NotImplementedError()
 
-    def apply(self, patch: PatchFile):
+    def apply(self, patch: PatchFile, reject=True, check=False):
         """Apply a patch to the current source"""
         raise NotImplementedError()
     

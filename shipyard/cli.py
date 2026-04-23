@@ -5,6 +5,7 @@ Primary CLI
 import os
 import sys
 import fire
+import anyio
 
 from shipyard.patches import Patches
 from shipyard.patch import PatchFile
@@ -75,6 +76,8 @@ class ShipyardCLI:
         This patch can later be applied to multiple versions of the source
         
         Example: git diff file.c | shipyard import mypatch "this is an awesome patchfile" """
+        # We don't actually use _load here, so it should be fine.
+        # But for consistency and to avoid future issues:
         buf = sys.stdin.read()
         buf = buf.strip()
         if not buf:
@@ -254,10 +257,11 @@ class ShipyardCLI:
                 except Exception as e:
                     print(f"[!] Failed to export patch: {e}", file=sys.stderr)
                     exit(1)
-            else:
-                # Should have been caught by "Package name not specified" or loading logic, but just in case
-                print("[!] Error: No patch content available. Provide a .patch file or a valid Shipfile.", file=sys.stderr)
-                exit(1)
+
+        if not patch_content:
+            # Should have been caught by "Package name not specified" or loading logic, but just in case
+            print("[!] Error: No patch content available. Provide a .patch file or a valid Shipfile.", file=sys.stderr)
+            exit(1)
         
         # Determine output directory
         if output:
@@ -270,14 +274,24 @@ class ShipyardCLI:
             output_dir = "build-output"
 
         print(f"[*] Starting build for {pkg_name} on {image}...")
+
+        # If patch_content was generated from p.export, we don't want to re-apply it in build_package
+        # because build_package will now use p.patch() internally.
+        # We only want to pass patch_content if it was provided as an external file.
+
+        # Check if patch argument was a .patch file
+        is_external_patch = patch and os.path.isfile(patch) and patch.endswith(".patch")
+
         anyio.run(
             build_package,
             image or "",
             pkg_name or "",
-            patch_content or "",
+            patch_content if is_external_patch else "",
             output_dir or "",
             bool(interactive),
-            artifacts or ""
+            artifacts or "",
+            os.path.abspath(p._dir) if p else ".",
+            resolved_version or ""
         )
 
 

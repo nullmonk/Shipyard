@@ -44,7 +44,7 @@ class DebianDriver(DistroDriver):
             .with_exec([
                 "apt-get", "install", "-qq", "-y",
                 "gcc", "devscripts", "quilt", "build-essential",
-                "vim", "iproute2", "python3-pip", "nmap", "git"
+                "vim", "iproute2", "nmap", "git"
             ])
             .with_exec(["mkdir", "-p", "/tmp/build/"])
         )
@@ -92,4 +92,13 @@ class DebianDriver(DistroDriver):
         return r".*\.deb$"
     
     def get_artifact_dir(self) -> str:
+        return "/tmp/build"
+
+    async def get_source_dir(self, container: dagger.Container, package: str) -> str:
+        # Debian apt-get source unpacks into a subdirectory of /tmp/build
+        # We find the directory that isn't shipyard.patch and is a directory
+        out = await container.with_workdir("/tmp/build").with_exec(["ls", "-F"]).stdout()
+        for line in out.splitlines():
+            if line.endswith("/") and line != "artifacts/":
+                return f"/tmp/build/{line.rstrip('/')}"
         return "/tmp/build"

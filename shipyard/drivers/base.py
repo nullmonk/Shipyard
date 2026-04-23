@@ -54,6 +54,13 @@ class DistroDriver(ABC):
         """
         pass
 
+    @abstractmethod
+    async def get_source_dir(self, container: dagger.Container, package: str) -> str:
+        """
+        Return the directory where the source code is unpacked.
+        """
+        pass
+
     async def list_artifacts(self, container: dagger.Container) -> list[str]:
         """
         List all artifacts in the artifact directory.
