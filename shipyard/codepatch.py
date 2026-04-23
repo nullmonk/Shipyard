@@ -1,7 +1,7 @@
 class CodePatch:
     """
     Custom patches that are not just "diff based". Instead they match filenames
-    and allow the user to make changes to the file. Integrates best with EZ
+    and allow the user to make changes to the file. Integrates best with CodeFile
     """
     def __init__(self, file, *files, versions=[], required=True, **kwargs):
         self.files = [file] + list(files)
