@@ -93,36 +93,9 @@ class Patches:
             if not self.versions[version]:
                 del self.versions[version]
     
-    def get_file_list(self, base_dir="") -> List[str]:
-        """List files, honoring the .gitignore
-        
-        https://stackoverflow.com/questions/70745060/how-to-list-directory-files-excluding-files-in-gitignore
-        https://stackoverflow.com/a/19859907
-        """
-        self._files = []
-        ignored = [".git"]
-        if not base_dir:
-            base_dir = self.infoObject.resolve_source_directory()
-        if path.isfile(path.join(base_dir, ".gitignore")):
-            with open(path.join(base_dir, ".gitignore")) as f:
-                ignored += [line for line in f.read().splitlines() if line]
-
-        for root, dirs, files in walk(base_dir):
-            r = path.relpath(root, base_dir)
-            if any(fnmatch.fnmatch(r, i) for i in ignored):
-                dirs[:] = []
-                continue
-            _, d = path.split(root)
-            if d in ignored or d+"/" in ignored or any(fnmatch.fnmatch(d, i) for i in ignored):
-                dirs[:] = []
-                continue
-            for f in files:
-                if f in ignored:
-                    continue
-                f = path.join(root, f)
-                ign = any(fnmatch.fnmatch(f, i) for i in ignored)
-                if not ign:
-                    self._files.append(f)
+    def get_file_list(self) -> List[str]:
+        """List files, honoring the .gitignore"""
+        self._files = self.source.list_files()
         return self._files
 
     def apply_similar_patch(self, patch, similarversions, outdir):
@@ -137,8 +110,10 @@ class Patches:
                 self.source.apply(p)
                 contents = self.source.refresh(p)
                 _, fname = path.split(p.Filename)
-                out = path.join(self._dir, self.infoObject.Patches, v, fname)
-                with open(path.join(out), "w") as f:
+                # Outputting the patch file is NOT part of the source manager
+                # as it belongs to the shipyard project itself
+                output = path.join(outdir, fname)
+                with open(output, "w") as f:
                     f.write(contents)
                 print(f"[+] Applied {p.Name} from {v}")
                 return True
@@ -243,11 +218,7 @@ class Patches:
         can_run_on = set()
         r: re.Pattern
         
-        base = self.infoObject.resolve_source_directory()
         rel_file = file
-        if file.startswith(base):
-            rel_file = path.relpath(file, base)
-
         for r, funcs in self.code_res.items():
             if r.fullmatch(rel_file) or r.fullmatch(rel_file.lstrip("/")):
                 for f in funcs:
