@@ -25,6 +25,39 @@ class GitMgr(SourceManager):
             if res.returncode != 0:
                 raise ValueError(res.stderr)
     
+    def read(self, path: str):
+        self.prepare()
+        fpath = os.path.join(self.r.Directory, path)
+        with open(fpath, "rb") as f:
+            data = f.read()
+        try:
+            return data.decode("utf-8")
+        except UnicodeDecodeError:
+            return data
+
+    def write(self, path: str, contents) -> None:
+        self.prepare()
+        fpath = os.path.join(self.r.Directory, path)
+        os.makedirs(os.path.dirname(fpath), exist_ok=True)
+        if isinstance(contents, bytes):
+            with open(fpath, "wb") as f:
+                f.write(contents)
+        else:
+            with open(fpath, "w", encoding="utf-8") as f:
+                f.write(contents)
+
+    def list_files(self) -> List[str]:
+        self.prepare()
+        res = subprocess.run(
+            ["git", "ls-files"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            cwd=self.r.Directory,
+            encoding="utf-8"
+        )
+        if res.returncode != 0:
+            raise ValueError(res.stderr)
+        return res.stdout.splitlines()
+
     def version(self) -> str:
         """Return the current version"""
         self.prepare()

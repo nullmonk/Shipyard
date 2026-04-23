@@ -99,3 +99,15 @@ class SourceManager:
     def reset(self) -> None:
         """Reset the source after changes were made"""
         raise NotImplementedError()
+
+    def read(self, path: str):
+        """Read a file from the source"""
+        raise NotImplementedError()
+
+    def write(self, path: str, contents) -> None:
+        """Write a file to the source"""
+        raise NotImplementedError()
+
+    def list_files(self) -> List[str]:
+        """List all files in the source"""
+        raise NotImplementedError()
