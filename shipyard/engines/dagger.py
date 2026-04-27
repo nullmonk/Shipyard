@@ -7,10 +7,10 @@ from shipyard.drivers.debian import DebianDriver
 from shipyard.drivers.rpm import RPMDriver
 from shipyard.drivers.arch import ArchDriver
 from shipyard.patches import Patches
-from shipyard.dagger import DaggerMgr
+from shipyard.dagger_mgr import DaggerMgr
 from shipyard.version import Version
 
-async def build_package(image: str, package: str, patch_content: str, output_dir: str = "builds", interactive: bool = False, artifacts: str = "", shipyard_dir: str = ".", version: str = ""):
+async def build_package(image: str, package: str = "", patch: str = "", output_dir: str = "builds", interactive: bool = False, artifacts: str = "", version: str = ""):
     async with dagger.Connection(dagger.Config(log_output=sys.stderr)) as client:
         # Determine driver
         if any(x in image for x in ["debian", "ubuntu", "linuxmint", "kali"]):
@@ -22,55 +22,83 @@ async def build_package(image: str, package: str, patch_content: str, output_dir
         else:
             raise ValueError(f"Unsupported image: {image}")
 
-        print(f"[*] Starting build for {package} on {image}")
+        # If package name is not provided, we will try to get it from the shipfile later
+        pkg_name = package
+        print(f"[*] Starting build for {pkg_name or 'unspecified package'} on {image}")
 
         ctr = None
         ctr_pre_build = None
         try:
             ctr = client.container().from_(image)
             ctr = driver.setup(ctr)
-            ctr = driver.install_build_deps(ctr, package)
-            ctr = driver.prepare_source(ctr, package)
 
-            source_dir = await driver.get_source_dir(ctr, package)
+            # If we don't have a package name yet, we might need to load the shipfile first
+            # But driver.install_build_deps needs a package name.
+            # So if we have a shipfile, let's load it now to get the package name.
+            p = None
+            if patch:
+                if os.path.isdir(patch) or (os.path.isfile(patch) and patch.endswith(".py")):
+                    shipyard_dir = patch if os.path.isdir(patch) else os.path.dirname(os.path.abspath(patch))
+                    p = Patches(shipyard_dir, pull=False) # Don't pull on host
+                    if not pkg_name and hasattr(p.infoObject, "Package"):
+                        pkg_name = p.infoObject.Package
+                        print(f"[*] Resolved package name to {pkg_name}")
+
+            if not pkg_name:
+                raise ValueError("Package name must be specified or defined in a Shipfile")
+
+            ctr = driver.install_build_deps(ctr, pkg_name)
+            ctr = driver.prepare_source(ctr, pkg_name)
+
+            source_dir = await driver.get_source_dir(ctr, pkg_name)
 
             # Set SHIPYARD_SOURCE env in container
             ctr = ctr.with_env_variable("SHIPYARD_SOURCE", source_dir)
 
-            # Use Patches in a separate thread because it's synchronous but DaggerMgr uses anyio.from_thread.run
-            def _patch_source(shipyard_dir, ctr, version, source_dir):
-                p = Patches(shipyard_dir)
-                p.source = DaggerMgr(ctr, path=source_dir)
+            patch_content = ""
+            if patch:
+                if os.path.isfile(patch) and patch.endswith(".patch"):
+                    with open(patch, "r") as f:
+                        patch_content = f.read()
+                elif p:
+                    # It's a shipfile/directory
+                    print(f"[*] Generating patch from Shipfile for {pkg_name}...")
 
-                # Resolve version if needed
-                resolved_version = version
-                if not resolved_version:
-                    vers = p.source.versions()
-                    if vers:
-                        resolved_version = str(vers[-1])
+                    def _generate_patch_content(p, ctr, source_dir, version, client):
+                        p.source = DaggerMgr(ctr, path=source_dir, client=client)
 
-                if resolved_version:
-                    print(f"[*] Resolved version to {resolved_version}")
-                    p._checkout(resolved_version)
+                        resolved_version = version
+                        if not resolved_version:
+                            # Try to get version from the container's source
+                            # DaggerMgr currently just returns "latest"
+                            pass
 
-                # Apply patches (both file-based and code-based)
-                print(f"[*] Applying patches to {package} source in container...")
-                relevant_patches = p.versions.get(Version(resolved_version), []) if resolved_version else []
-                p.patch(patches=relevant_patches)
-                return p.source.container
+                        # Apply patches
+                        relevant_patches = []
+                        if resolved_version:
+                            relevant_patches = p.versions.get(Version(resolved_version), [])
 
-            ctr = await anyio.to_thread.run_sync(_patch_source, shipyard_dir, ctr, version, source_dir)
+                        p.patch(patches=relevant_patches)
 
-            # If patch_content was provided from CLI (and it's not empty), apply it using the driver
-            # This allows user-provided .patch files to work alongside Shipfile patches
+                        # Generate unified patch
+                        content = p.source.refresh()
+
+                        # Variable substitution
+                        for k, v in p.infoObject.Variables.items():
+                            content = content.replace(k, v)
+
+                        return content
+
+                    patch_content = await anyio.to_thread.run_sync(_generate_patch_content, p, ctr, source_dir, version, client)
+
             if patch_content:
-                print(f"[*] Applying custom patch content...")
-                ctr = await driver.apply_patch(ctr, patch_content, package)
+                print(f"[*] Applying generated/provided patch to {pkg_name}...")
+                ctr = await driver.apply_patch(ctr, patch_content, pkg_name)
 
             ctr_pre_build = ctr
-            ctr = driver.build(ctr, package)
+            ctr = driver.build(ctr, pkg_name)
             os.makedirs(output_dir, exist_ok=True)
-            artifact_pattern = artifacts if artifacts else driver.get_artifact_pattern(package)
+            artifact_pattern = artifacts if artifacts else driver.get_artifact_pattern(pkg_name)
             src_dir = driver.get_artifact_dir()
             print(f"[*] listing artifacts in {src_dir}...")
             files = await driver.list_artifacts(ctr)
