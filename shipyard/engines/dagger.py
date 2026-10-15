@@ -1,71 +1,106 @@
-import sys
-import dagger
+"""
+The build pipeline:
+
+    1. distro container: install build deps, fetch the distro source, snapshot it in git
+    2. shipyard container: run the Shipfile's CodePatches on a copy of that source
+    3. distro container: take the patched source back and `git diff` it into a patch
+    4. distro container: reset the tree, apply the patch the distro's way, build the package
+"""
 import os
 import re
-import anyio
+import sys
+import dagger
+
+from shipyard.drivers.base import DistroDriver
 from shipyard.drivers.debian import DebianDriver
 from shipyard.drivers.rpm import RPMDriver
 from shipyard.drivers.arch import ArchDriver
-from shipyard.patches import Patches
-from shipyard.dagger import DaggerMgr
-from shipyard.version import Version
 
-async def build_package(image: str, package: str, patch_content: str, output_dir: str = "builds", interactive: bool = False, artifacts: str = "", shipyard_dir: str = ".", version: str = ""):
+# Package root, mounted into the shipyard container
+SHIPYARD_PKG = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+RUNNER_IMAGE = "python:3-slim"
+GIT = ["git", "-c", "user.name=shipyard", "-c", "user.email=shipyard@localhost"]
+
+def get_driver(image: str) -> DistroDriver:
+    if any(x in image for x in ["debian", "ubuntu", "linuxmint", "kali"]):
+        return DebianDriver(image)
+    if any(x in image for x in ["redhat", "centos", "rocky", "fedora", "amazonlinux"]):
+        return RPMDriver(image)
+    if "archlinux" in image:
+        return ArchDriver(image)
+    raise ValueError(f"Unsupported image: {image}")
+
+def snapshot_source(ctr: dagger.Container, source_dir: str) -> dagger.Container:
+    """Commit the pristine source so the shipfile's changes can be diffed out later"""
+    return (
+        ctr.with_workdir(source_dir)
+        .with_exec(["git", "init", "-q"])
+        .with_exec(["git", "add", "-A", "-f"])
+        .with_exec(GIT + ["commit", "-q", "-m", "pristine"])
+    )
+
+def run_shipfile(client: dagger.Client, source: dagger.Directory, shipfile_dir: str, source_name: str, version: str) -> dagger.Directory:
+    """Run the shipfile on the source inside the shipyard container, return the patched source"""
+    shipfile = client.host().directory(shipfile_dir, exclude=["sources/", "__pycache__/", "build-output/"])
+    shipyard = client.host().directory(SHIPYARD_PKG, exclude=["__pycache__/"])
+    args = ["python", "-m", "shipyard.runner", "/ship", "/work/" + source_name]
+    if version:
+        args.append(version)
+    runner = (
+        client.container().from_(RUNNER_IMAGE)
+        .with_directory("/opt/shipyard/shipyard", shipyard)
+        .with_env_variable("PYTHONPATH", "/opt/shipyard")
+        .with_env_variable("PYTHONDONTWRITEBYTECODE", "1")
+        .with_directory("/ship", shipfile)
+        .with_directory("/work/" + source_name, source)
+        .with_exec(args)
+    )
+    return runner.directory("/work/" + source_name)
+
+def generate_patch(ctr: dagger.Container, source_dir: str) -> dagger.File:
+    """Diff the patched working tree against the pristine commit"""
+    return ctr.with_workdir(source_dir).with_exec(
+        ["/bin/sh", "-c", "git add -A -f && git diff --cached --binary > /tmp/shipyard.patch"]
+    ).file("/tmp/shipyard.patch")
+
+async def build_package(image: str, package: str, patch_content: str = "", output_dir: str = "builds", interactive: bool = False, artifacts: str = "", shipyard_dir: str = ".", version: str = ""):
     async with dagger.Connection(dagger.Config(log_output=sys.stderr)) as client:
-        # Determine driver
-        if any(x in image for x in ["debian", "ubuntu", "linuxmint", "kali"]):
-            driver = DebianDriver(image)
-        elif any(x in image for x in ["redhat", "centos", "rocky", "fedora", "amazonlinux"]):
-            driver = RPMDriver(image)
-        elif "archlinux" in image:
-             driver = ArchDriver(image)
-        else:
-            raise ValueError(f"Unsupported image: {image}")
-
+        driver = get_driver(image)
         print(f"[*] Starting build for {package} on {image}")
 
         ctr = None
         ctr_pre_build = None
         try:
+            # 1. distro container with the build deps and the source
             ctr = client.container().from_(image)
             ctr = driver.setup(ctr)
             ctr = driver.install_build_deps(ctr, package)
             ctr = driver.prepare_source(ctr, package)
-
             source_dir = await driver.get_source_dir(ctr, package)
+            source_name = os.path.basename(source_dir)
+            ctr = snapshot_source(ctr, source_dir)
 
-            # Set SHIPYARD_SOURCE env in container
-            ctr = ctr.with_env_variable("SHIPYARD_SOURCE", source_dir)
+            if shipyard_dir:
+                # 2. shipyard container runs the shipfile on the source
+                print(f"[*] Running shipfile from {shipyard_dir} on {source_name}")
+                patched = run_shipfile(client, ctr.directory(source_dir), shipyard_dir, source_name, version)
 
-            # Use Patches in a separate thread because it's synchronous but DaggerMgr uses anyio.from_thread.run
-            def _patch_source(shipyard_dir, ctr, version, source_dir):
-                p = Patches(shipyard_dir)
-                p.source = DaggerMgr(ctr, path=source_dir)
+                # 3. patched source goes back into the distro container and becomes a patch
+                ctr = ctr.with_directory(source_dir, patched)
+                patch_content = await generate_patch(ctr, source_dir).contents() + patch_content
+            if not patch_content.strip():
+                raise ValueError("The shipfile did not change the source, there is nothing to build")
+            print(f"[*] Generated patch ({len(patch_content.splitlines())} lines)")
 
-                # Resolve version if needed
-                resolved_version = version
-                if not resolved_version:
-                    vers = p.source.versions()
-                    if vers:
-                        resolved_version = str(vers[-1])
-
-                if resolved_version:
-                    print(f"[*] Resolved version to {resolved_version}")
-                    p._checkout(resolved_version)
-
-                # Apply patches (both file-based and code-based)
-                print(f"[*] Applying patches to {package} source in container...")
-                relevant_patches = p.versions.get(Version(resolved_version), []) if resolved_version else []
-                p.patch(patches=relevant_patches)
-                return p.source.container
-
-            ctr = await anyio.to_thread.run_sync(_patch_source, shipyard_dir, ctr, version, source_dir)
-
-            # If patch_content was provided from CLI (and it's not empty), apply it using the driver
-            # This allows user-provided .patch files to work alongside Shipfile patches
-            if patch_content:
-                print(f"[*] Applying custom patch content...")
-                ctr = await driver.apply_patch(ctr, patch_content, package)
+            # 4. restore the pristine tree and let the distro apply the patch itself
+            ctr = (
+                ctr.with_workdir(source_dir)
+                .with_exec(["git", "reset", "-q", "--hard"])
+                .with_exec(["git", "clean", "-q", "-fdx"])
+                .with_exec(["rm", "-rf", ".git"])
+            )
+            ctr = await driver.apply_patch(ctr, patch_content, package)
 
             ctr_pre_build = ctr
             ctr = driver.build(ctr, package)
@@ -79,13 +114,12 @@ async def build_package(image: str, package: str, patch_content: str, output_dir
                 print(f"[!] Warning: No artifacts found matching '{artifact_pattern}'")
             else:
                 print(f"[*] Found {len(matches)} artifacts matching '{artifact_pattern}'")
-                # We can copy artifacts to a clean directory inside container and export that.
                 ctr = ctr.with_exec(["mkdir", "-p", "/tmp/artifacts"])
                 ctr = ctr.with_new_file("/tmp/artifacts_list", "\n".join(matches))
                 copy_cmd = f"cd {src_dir} && tr '\\n' '\\0' < /tmp/artifacts_list | xargs -0 cp -t /tmp/artifacts/"
                 ctr = ctr.with_exec(["/bin/bash", "-c", copy_cmd])
                 await ctr.directory("/tmp/artifacts").export(output_dir)
-                
+
                 print(f"[+] Build complete. Artifacts exported to {output_dir}")
                 for root, dirs, files in os.walk(output_dir):
                     for file in files:
@@ -98,7 +132,6 @@ async def build_package(image: str, package: str, patch_content: str, output_dir
         except Exception as e:
             print(f"[!] Build failed: {e}")
             if interactive:
-                # Use the most recent valid container state
                 target_ctr = ctr_pre_build or ctr
                 if target_ctr:
                     print("[*] Dropping into interactive shell...")

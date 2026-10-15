@@ -17,7 +17,7 @@ class ShipyardCLI:
         """Maintain a group of patches against a source repository"""
         self.dir = directory
     
-    def _load(self) -> Patches:
+    def _load(self, pull=True) -> Patches:
         # @TODO: Search any python files in the current dir for valid Shipfile objects
         # TODO: Search any python files in the current dir
         path = os.path.join(self.dir, "shipfile.py")
@@ -31,7 +31,7 @@ class ShipyardCLI:
             if os.path.exists(path):
                 # Detected a shipyard file in the current dir, assume this is the patch folder
                 d, _ = os.path.split(path)
-                return Patches(d)
+                return Patches(d, pull=pull)
             #except Exception as e:
                 #print(f"[!] Detected a shipyard.py file. But there were errors loading it: {e}", file=sys.stderr)
                 #exit(127)
@@ -186,112 +186,51 @@ class ShipyardCLI:
             print("    Please install with: pip install dagger-io anyio", file=sys.stderr)
             exit(1)
 
-        p = None
+        shipfile_dir = None
         patch_content = ""
-        
+
         if patch:
-            if os.path.isfile(patch):
-                if patch.endswith(".patch"):
-                    try:
-                        with open(patch, "r") as f:
-                            patch_content = f.read()
-                        print(f"[*] Loaded patch from {patch}")
-                    except Exception as e:
-                        print(f"[!] Failed to read patch file {patch}: {e}", file=sys.stderr)
-                        exit(1)
-                elif patch.endswith(".py"):
-                    # Assume it points to a Shipfile.py
-                    directory = os.path.dirname(os.path.abspath(patch))
-                    print(f"[*] Loading Shipfile from {directory}")
-                    try:
-                        p = Patches(directory)
-                    except Exception as e:
-                        print(f"[!] Failed to load shipfile {patch}: {e}", file=sys.stderr)
-                        exit(1)
-                else:
-                    print(f"[!] Unknown file type for patch argument: {patch}. Expected .patch or .py", file=sys.stderr)
-                    exit(1)
+            if os.path.isfile(patch) and patch.endswith(".patch"):
+                # An extra raw patch, applied on top of whatever the shipfile does
+                with open(patch, "r") as f:
+                    patch_content = f.read()
+                print(f"[*] Loaded patch from {patch}")
+            elif os.path.isfile(patch) and patch.endswith(".py"):
+                shipfile_dir = os.path.dirname(os.path.abspath(patch))
             elif os.path.isdir(patch):
-                print(f"[*] Loading Shipfile from directory {patch}")
-                try:
-                    p = Patches(patch)
-                except Exception as e:
-                    print(f"[!] Failed to load from directory {patch}: {e}", file=sys.stderr)
-                    exit(1)
+                shipfile_dir = os.path.abspath(patch)
             else:
-                 print(f"[!] Patch path not found: {patch}", file=sys.stderr)
-                 exit(1)
-        else:
-            # Default behavior: try to find shipfile in current/parent dirs
-            try:
-                p = self._load()
-            except Exception:
-                # If we can't load a shipfile and no patch is provided, we can't proceed unless user provided a patch file
-                pass
+                print(f"[!] Patch path not found or not a .patch, .py or directory: {patch}", file=sys.stderr)
+                exit(1)
+
+        if shipfile_dir is None and (patch_content == "" or not package):
+            shipfile_dir = os.path.abspath(self._load(pull=False)._dir)
 
         # Determine package name
-        if package:
-            pkg_name = package
-        elif p and getattr(p.infoObject, "Package", None):
-            pkg_name = p.infoObject.Package
-        else:
+        pkg_name = package
+        if not pkg_name and shipfile_dir:
+            pkg_name = getattr(Patches(shipfile_dir, pull=False).infoObject, "Package", None)
+        if not pkg_name:
             print("[!] Error: Package name not specified. Please provide the 'package' argument or define 'Package' in your Shipfile.", file=sys.stderr)
             exit(1)
 
-        # Resolve version if empty
-        resolved_version = version
-        if not resolved_version and p:
-            try:
-                vers = p.source.versions()
-                if vers:
-                    resolved_version = str(vers[-1])
-            except Exception:
-                pass
-
-        # Generate patch content if we haven't already (from Shipfile)
-        if not patch_content:
-            if p:
-                print(f"[*] Preparing patch for {pkg_name}...")
-                try:
-                    patch_content, _ = p.export(version)
-                except Exception as e:
-                    print(f"[!] Failed to export patch: {e}", file=sys.stderr)
-                    exit(1)
-
-        if not patch_content:
-            # Should have been caught by "Package name not specified" or loading logic, but just in case
-            print("[!] Error: No patch content available. Provide a .patch file or a valid Shipfile.", file=sys.stderr)
-            exit(1)
-        
         # Determine output directory
         if output:
-            image_parts = image.split(":")
-            if len(image_parts) > 1:
-                output_dir = os.path.join(output, *image_parts)
-            else:
-                output_dir = os.path.join(output, image)
+            output_dir = os.path.join(output, *image.split(":"))
         else:
             output_dir = "build-output"
 
         print(f"[*] Starting build for {pkg_name} on {image}...")
-
-        # If patch_content was generated from p.export, we don't want to re-apply it in build_package
-        # because build_package will now use p.patch() internally.
-        # We only want to pass patch_content if it was provided as an external file.
-
-        # Check if patch argument was a .patch file
-        is_external_patch = patch and os.path.isfile(patch) and patch.endswith(".patch")
-
         anyio.run(
             build_package,
-            image or "",
-            pkg_name or "",
-            patch_content if is_external_patch else "",
-            output_dir or "",
+            image,
+            pkg_name,
+            patch_content,
+            output_dir,
             bool(interactive),
             artifacts or "",
-            os.path.abspath(p._dir) if p else ".",
-            resolved_version or ""
+            shipfile_dir or "",
+            version or "",
         )
 
 
