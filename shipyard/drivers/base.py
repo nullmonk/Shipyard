@@ -63,21 +63,14 @@ class DistroDriver(ABC):
 
     async def list_artifacts(self, container: dagger.Container) -> list[str]:
         """
-        List all artifacts in the artifact directory.
+        List all artifacts in the artifact directory. This is the first thing that
+        forces the (lazy) build to run, so a build failure surfaces here.
         """
-        dir_path = self.get_artifact_dir()
-        try:
-            output = await (
-                container
-                .with_workdir(dir_path)
-                .with_exec(["find", ".", "-type", "f"])
-                .stdout()
-            )
-            
-            files = [f.strip() for f in output.splitlines() if f.strip()]
-            # Normalize paths (remove leading ./)
-            files = [f[2:] if f.startswith("./") else f for f in files]
-            return files
-        except Exception as e:
-            print(f"Warning: Failed to list artifacts: {e}")
-            return []
+        output = await (
+            container
+            .with_workdir(self.get_artifact_dir())
+            .with_exec(["find", ".", "-type", "f"])
+            .stdout()
+        )
+        # Normalize paths (remove leading ./)
+        return [f[2:] if f.startswith("./") else f for f in map(str.strip, output.splitlines()) if f]

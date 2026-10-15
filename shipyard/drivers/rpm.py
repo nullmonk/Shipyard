@@ -101,11 +101,20 @@ class RPMDriver(DistroDriver):
 
     async def get_source_dir(self, container: dagger.Container, package: str) -> str:
         # After rpmbuild -bp, source is in /tmp/build/BUILD/<pkg>-<version>
-        out = await container.with_workdir("/tmp/build/BUILD").with_exec(["ls", "-F"]).stdout()
-        for line in out.splitlines():
-            if line.endswith("/"):
-                return f"/tmp/build/BUILD/{line.rstrip('/')}"
-        return "/tmp/build/BUILD"
+        build = "/tmp/build/BUILD"
+        out = await container.with_workdir(build).with_exec(["ls", "-F"]).stdout()
+        dirs = [l.rstrip("/") for l in out.split() if l.endswith("/")]
+        if not dirs:
+            return build
+        name = dirs[0]
+
+        # Newer rpm wraps that in a <pkg>-<version>-build directory with the source inside it
+        if name.endswith("-build"):
+            out = await container.with_workdir(f"{build}/{name}").with_exec(["ls", "-F"]).stdout()
+            inner = name[:-len("-build")]
+            if inner + "/" in out.split():
+                return f"{build}/{name}/{inner}"
+        return f"{build}/{name}"
 
 
 class RockyDriver(RPMDriver):

@@ -115,7 +115,7 @@ async def build_package(image: str, package: str, patch_content: str = "", outpu
             files = await driver.list_artifacts(ctr)
             matches = [f for f in files if re.search(artifact_pattern, f)]
             if not matches:
-                print(f"[!] Warning: No artifacts found matching '{artifact_pattern}'")
+                raise ValueError(f"The build produced no artifacts matching '{artifact_pattern}' in {src_dir}")
             else:
                 print(f"[*] Found {len(matches)} artifacts matching '{artifact_pattern}'")
                 ctr = ctr.with_exec(["mkdir", "-p", "/tmp/artifacts"])

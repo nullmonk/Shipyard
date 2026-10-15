@@ -27,8 +27,9 @@ class ArchDriver(DistroDriver):
             # Install deps and prepare sources (extract + prepare())
             # -s: syncdeps (install missing deps)
             # -o: nobuild (download, extract, prepare)
+            # --skippgpcheck: the upstream signing keys are not in the container, checksums are still verified
             # --noconfirm: do not ask
-            .with_exec(["makepkg", "-so", "--noconfirm"])
+            .with_exec(["makepkg", "-so", "--noconfirm", "--skippgpcheck"])
         )
 
     def prepare_source(self, container: dagger.Container, package: str) -> dagger.Container:
@@ -53,6 +54,10 @@ class ArchDriver(DistroDriver):
             .with_workdir(f"/tmp/build/{package}/src")
             # We use a shell to find the directory and apply patch
             .with_exec(["/bin/bash", "-c", "cd */ && patch -p1 < ../../shipyard.patch"])
+            # makepkg -e reuses this tree as is. Copying it between containers changed the
+            # timestamps, which makes autotools think configure.ac is newer than configure
+            # and refuse to build. Give every file the same time.
+            .with_exec(["/bin/bash", "-c", "find . -exec touch -h -d @0 {} +"])
         )
 
     def get_artifact_pattern(self, package: str) -> str:
