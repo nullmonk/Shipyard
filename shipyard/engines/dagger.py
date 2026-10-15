@@ -13,7 +13,7 @@ import dagger
 
 from shipyard.drivers.base import DistroDriver
 from shipyard.drivers.debian import DebianDriver
-from shipyard.drivers.rpm import RPMDriver
+from shipyard.drivers.rpm import RPMDriver, RockyDriver, CentOSDriver
 from shipyard.drivers.arch import ArchDriver
 
 # Package root, mounted into the shipyard container
@@ -25,7 +25,11 @@ GIT = ["git", "-c", "user.name=shipyard", "-c", "user.email=shipyard@localhost"]
 def get_driver(image: str) -> DistroDriver:
     if any(x in image for x in ["debian", "ubuntu", "linuxmint", "kali"]):
         return DebianDriver(image)
-    if any(x in image for x in ["redhat", "centos", "rocky", "fedora", "amazonlinux"]):
+    if "rocky" in image:
+        return RockyDriver(image)
+    if "centos" in image:
+        return CentOSDriver(image)
+    if any(x in image for x in ["redhat", "fedora", "amazonlinux"]):
         return RPMDriver(image)
     if "archlinux" in image:
         return ArchDriver(image)
