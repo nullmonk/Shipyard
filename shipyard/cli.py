@@ -5,7 +5,6 @@ Primary CLI
 import os
 import sys
 import fire
-import anyio
 
 from shipyard.patches import Patches
 from shipyard.patch import PatchFile
@@ -19,8 +18,6 @@ class ShipyardCLI:
     
     def _load(self, pull=True) -> Patches:
         # @TODO: Search any python files in the current dir for valid Shipfile objects
-        # TODO: Search any python files in the current dir
-        path = os.path.join(self.dir, "shipfile.py")
         paths = [
             os.path.join(self.dir, "shipfile.py"),
             os.path.join(".", "shipfile.py"),
@@ -32,9 +29,6 @@ class ShipyardCLI:
                 # Detected a shipyard file in the current dir, assume this is the patch folder
                 d, _ = os.path.split(path)
                 return Patches(d, pull=pull)
-            #except Exception as e:
-                #print(f"[!] Detected a shipyard.py file. But there were errors loading it: {e}", file=sys.stderr)
-                #exit(127)
         print("[!] This directory does not appear to be a Shipyard directory. Try passing a directory with '--directory' or setting it up in the current directory", file=sys.stderr)
         print(f"{sys.argv[0]} init <url>", file=sys.stderr)
         exit(127)
@@ -133,16 +127,15 @@ class ShipyardCLI:
     def list_source_files(self):
         """List all files of the source that are not in the gitignore"""
         p = self._load()
-        p.get_file_list()
-        for f in p._files:
+        for f in p.source.list_files():
             print(f)
     
     def apply_code_patches(self, patches=[]):
         """Apply all the code patches to the current source"""
         p = self._load()
-        p.get_file_list()
+        p._files = p.source.list_files()
         try:
-            code_funcs, _ =  p.apply_code_patches()
+            code_funcs, _ = p.apply_code_patches(patches)
             for cf in code_funcs:
                 print(f"[+] applied {cf.__name__}")
         except Exception as e:
@@ -235,8 +228,6 @@ class ShipyardCLI:
 
 
 def run():
-    #p = Patch.from_file(sys.argv[1])
-    #print(p.dump())
     fire.Fire(ShipyardCLI)
 
 if __name__ == "__main__":

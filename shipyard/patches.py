@@ -1,18 +1,9 @@
 import inspect
 import glob
 import re
-import fnmatch
-import subprocess
-import shutil
 
 from os import path, walk, makedirs
 from collections import defaultdict
-from typing import List
-
-try:
-    from shutil import copytree
-except ImportError:
-    from distutils.dir_util import copy_tree as copytree
 
 from shipyard.patch import PatchFile
 from shipyard.utils import _load_object, getClosestVersions
@@ -87,7 +78,6 @@ class Patches:
                     patch = PatchFile.from_file(path.join(root, p))
                 except Exception:
                     raise ValueError(f"Invalid patchfile '{p}'")
-                #patch.update(self.infoObject.Variables)
                 self.patches[patch.Name] = patch
                 self.versions[version].add(patch)
             if not self.versions[version]:
@@ -273,57 +263,6 @@ class Patches:
             new_patch = new_patch.replace(k, v)
         return new_patch, patches
     
-    def export_from(self, directory):
-        """Apply code patches to an arbitrary directory and return the result
-        
-        #TODO This thing could be the same as export with a different SourceManager to
-        handle two dirs, but for now just hack it
-        """
-
-        # Should be "checkout" or "prepare" in new srcmgr
-        # Copy base as a working dir
-        if not path.isdir(directory):
-            raise ValueError(f"Not a valid directory: {directory}")
-        # Make a new working directory for us
-        seconddir = directory.rstrip("/") + "-shipyard"
-        copytree(directory, seconddir)
-        self.infoObject.source_directory = seconddir
-
-        cfs, files = self.patch()
-        patch = f"{self.infoObject.Name}\n"
-        prefix = path.commonpath([directory, seconddir])
-        if not prefix:
-            prefix = "."
-
-        fa = path.relpath(directory, prefix)
-        fb = path.relpath(seconddir, prefix)
-        # TODO: Can I just diff the folders instead of each file?
-        #for f in files:
-        #    f = path.relpath(f, seconddir) # Name of the file eg "kex.c" not "openssh/kex.c"
-        #    fa = path.relpath(path.join(directory, f), prefix)
-        #    fb = path.relpath(path.join(seconddir, f), prefix)
-
-        # Diff the results
-        args = ["git", "--no-pager", "diff", "--no-prefix", fa, fb]
-        res = subprocess.run(
-            args,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            encoding="utf8",
-            cwd=prefix
-        )
-        # https://git-scm.com/docs/git-diff#Documentation/git-diff.txt-emgitdiffemltoptionsgt--no-index--ltpathgtltpathgt
-        # https://git-scm.com/docs/git-diff#Documentation/git-diff.txt---exit-code
-        # 0 means no changes, 1 means changes
-        if res.stderr:
-            raise ValueError(f"command failed to run: {' '.join(args)}: '{res.stderr}'")
-        patch += res.stdout
-        shutil.rmtree(seconddir)
-        
-        # Sub all the vars
-        for k, v in self.infoObject.Variables.items():
-            patch = patch.replace(k, v)
-        return patch
-
     def patch(self, patches=[], codepatches=[]) -> "tuple[set, set]":
         """Patch source_dir with the given patches and the given codepatches
         

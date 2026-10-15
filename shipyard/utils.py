@@ -46,24 +46,3 @@ def getClosestVersions(version: str, versions: List[Version]) -> str:
     if not newVersions:
         return [version]
     return newVersions
-
-
-
-def getMajor(s) -> int:
-    """Get the major version from a string (first number in the string)"""
-    vs = [int(i) for i in re.split("[^\d]+", s) if i and i.isnumeric()]
-    if vs:
-        return vs[0]
-    return 0
-
-def getClosest():
-    v = [
-        "2.2.17",
-        "2.3.15",
-    ]
-    #v = [Version(i) for i in v]
-    closest = getClosestVersions("2.3.16", v)
-    print(closest)
-
-if __name__ == '__main__':
-    getClosest()

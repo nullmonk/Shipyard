@@ -7,7 +7,7 @@ from typing import List
 
 from shipyard.sources import SourceManager, SourceProgram
 from shipyard.patch import PatchFile
-from shipyard import Version
+from shipyard.version import Version
 
 class GitMgr(SourceManager):
     def __init__(self, repo: SourceProgram) -> None:
@@ -16,15 +16,28 @@ class GitMgr(SourceManager):
         """
         self.r = repo
         repo.Directory = repo.resolve_source_directory()
-    
+
+    def _git(self, *args, input=None, check=True) -> subprocess.CompletedProcess:
+        """Run git in the source directory. Raises ValueError with git's stderr on failure if check is set"""
+        res = subprocess.run(
+            ["git", *args],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            cwd=self.r.Directory,
+            input=input,
+            encoding="utf-8"
+        )
+        if check and res.returncode != 0:
+            raise ValueError(res.stderr)
+        return res
+
     def prepare(self):
         """Ensure we have the source code when we need it"""
         if not os.path.exists(self.r.Directory):
             print(f"[*] Cloning {self.r.Url} {self.r.Directory}")
-            res = subprocess.run(f"git clone {self.r.Url} {self.r.Directory}", shell=True, encoding="utf-8")
+            res = subprocess.run(["git", "clone", self.r.Url, self.r.Directory], encoding="utf-8")
             if res.returncode != 0:
                 raise ValueError(res.stderr)
-    
+
     def read(self, path: str):
         self.prepare()
         fpath = os.path.join(self.r.Directory, path)
@@ -48,38 +61,16 @@ class GitMgr(SourceManager):
 
     def list_files(self) -> List[str]:
         self.prepare()
-        res = subprocess.run(
-            ["git", "ls-files"],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            cwd=self.r.Directory,
-            encoding="utf-8"
-        )
-        if res.returncode != 0:
-            raise ValueError(res.stderr)
-        return res.stdout.splitlines()
+        return self._git("ls-files").stdout.splitlines()
 
     def version(self) -> str:
         """Return the current version"""
         self.prepare()
-        res = subprocess.run(
-            ["git", "describe", "--tags"],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            cwd=self.r.Directory,
-            encoding="utf-8"
-        )
-        return res.stdout.strip()
+        return self._git("describe", "--tags", check=False).stdout.strip()
 
     def versions(self) -> List[str]:
         self.prepare()
-        res = subprocess.run(
-            ["git", "--no-pager", "tag", "-l", self.r.VersionTags],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            cwd=self.r.Directory,
-            encoding="utf-8"
-        )
-        if res.returncode != 0:
-            raise ValueError(res.stderr)
-        out = res.stdout
+        out = self._git("--no-pager", "tag", "-l", self.r.VersionTags).stdout
         versions = []
         for tag in out.split():
             version = Version(self.r.tag_to_version(tag))
@@ -94,73 +85,29 @@ class GitMgr(SourceManager):
         self.r.Directory after this function is called. In our case its a git-checkout
         in other scenarios it might be a wget/etc"""
         self.prepare()
-        tag = self.r.version_to_tag(version)
-        
-        res = subprocess.run(
-            f"git checkout tags/{tag}",
-            shell=True,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            cwd=self.r.Directory,
-            encoding="utf-8"
-        )
-        if res.returncode != 0:
-            raise ValueError(res.stderr)
+        self._git("checkout", f"tags/{self.r.version_to_tag(version)}")
 
     def apply(self, patch: PatchFile, reject=True, check=False):
-        #rel = os.path.relpath(patch.Filename, self.r.Directory)
         self.prepare()
-        args = ["git", "apply", "-v", "--recount"]
+        args = ["apply", "-v", "--recount"]
         if reject:
-            args.insert(2, "--reject")
-        res = subprocess.run(
-            args,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            cwd=self.r.Directory,
-            input=patch.dump(),
-            encoding="utf-8"
-        )
-        # print(f"[{res.returncode}] {args}\n", res.stdout, res.stderr) # print debug best debug
+            args.insert(1, "--reject")
+        res = self._git(*args, input=patch.dump(), check=False)
         if res.returncode != 0:
             if check:
                 return False
             raise ValueError(res.stderr)
         return True
-    
+
     def refresh(self, patch: PatchFile = None):
         """Refresh a patch file and return the results"""
         self.prepare()
-        args = ["git", "--no-pager", "diff", ]
+        args = ["--no-pager", "diff"]
         if patch:
             args.append(patch.Index)
-        res = subprocess.run(
-            args,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            cwd=self.r.Directory,
-            encoding="utf-8"
-        )
-        if res.returncode != 0:
-            raise ValueError(res.stderr)
-        
-        return res.stdout
+        return self._git(*args).stdout
 
     def reset(self):
         self.prepare()
-        res = subprocess.run(
-            "git checkout .",
-            shell=True,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            cwd=self.r.Directory,
-            encoding="utf-8"
-        )
-        if res.returncode != 0:
-            raise ValueError(res.stderr)
-    
-        res = subprocess.run(
-            "git clean -fdx",
-            shell=True,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            cwd=self.r.Directory,
-            encoding="utf-8"
-        )
-        if res.returncode != 0:
-            raise ValueError(res.stderr)
+        self._git("checkout", ".")
+        self._git("clean", "-fdx")
