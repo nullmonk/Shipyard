@@ -13,7 +13,8 @@ import dagger
 
 from shipyard.drivers.base import DistroDriver
 from shipyard.drivers.debian import DebianDriver
-from shipyard.drivers.rpm import RPMDriver, RockyDriver, CentOSDriver
+from shipyard.drivers.rpm import RPMDriver, RockyDriver, CentOSDriver, SUSEDriver
+from shipyard.drivers.alpine import AlpineDriver
 from shipyard.drivers.arch import ArchDriver
 
 # Package root, mounted into the shipyard container
@@ -25,6 +26,10 @@ GIT = ["git", "-c", "user.name=shipyard", "-c", "user.email=shipyard@localhost"]
 def get_driver(image: str) -> DistroDriver:
     if any(x in image for x in ["debian", "ubuntu", "linuxmint", "kali"]):
         return DebianDriver(image)
+    if "suse" in image:
+        return SUSEDriver(image)
+    if "alpine" in image:
+        return AlpineDriver(image)
     if "rocky" in image:
         return RockyDriver(image)
     if "centos" in image:
@@ -38,7 +43,9 @@ def get_driver(image: str) -> DistroDriver:
 def snapshot_source(ctr: dagger.Container, source_dir: str) -> dagger.Container:
     """Commit the pristine source so the shipfile's changes can be diffed out later"""
     return (
-        ctr.with_workdir(source_dir)
+        # The tree changes owner when it is copied between containers, and git refuses those
+        ctr.with_exec(["git", "config", "--global", "--add", "safe.directory", "*"])
+        .with_workdir(source_dir)
         .with_exec(["git", "init", "-q"])
         .with_exec(["git", "add", "-A", "-f"])
         .with_exec(GIT + ["commit", "-q", "-m", "pristine"])
@@ -120,8 +127,8 @@ async def build_package(image: str, package: str, patch_content: str = "", outpu
                 print(f"[*] Found {len(matches)} artifacts matching '{artifact_pattern}'")
                 ctr = ctr.with_exec(["mkdir", "-p", "/tmp/artifacts"])
                 ctr = ctr.with_new_file("/tmp/artifacts_list", "\n".join(matches))
-                copy_cmd = f"cd {src_dir} && tr '\\n' '\\0' < /tmp/artifacts_list | xargs -0 cp -t /tmp/artifacts/"
-                ctr = ctr.with_exec(["/bin/bash", "-c", copy_cmd])
+                copy_cmd = f"cd {src_dir} && while IFS= read -r f || [ -n \"$f\" ]; do cp \"$f\" /tmp/artifacts/; done < /tmp/artifacts_list"
+                ctr = ctr.with_exec(["/bin/sh", "-c", copy_cmd])
                 await ctr.directory("/tmp/artifacts").export(output_dir)
 
                 print(f"[+] Build complete. Artifacts exported to {output_dir}")
