@@ -10,7 +10,7 @@ from shipyard.cli import ShipyardCLI
 # Configuration
 # List of (directory, package_name) tuples
 PROJECTS = [
-    ("examples/proftpd", "proftpd"),
+    ("examples/openssh", "openssh"),
     # Add other examples here, e.g. ("examples/hello", "hello")
 ]
 
