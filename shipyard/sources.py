@@ -27,6 +27,14 @@ class SourceProgram:
     IgnoredVersions = []
     Urls = [] # Pass a list of urls instead of a git repo
 
+    # Generic builder: a Shipfile that builds itself in a plain container
+    # instead of a distro's packaging tools. See docs/Shipfile.md.
+    BaseImage = "" # Container image to build in, e.g. "golang:1.22"
+    Setup = "" # Optional shell script to prepare the build environment
+    Build = "" # Shell script that builds the project. Presence of this marks the Shipfile as "generic"
+    Artifacts = "" # Regex matched against build output paths to decide what to export
+    ArtifactDir = "" # Where to look for Artifacts. Defaults to the source directory
+
     """If the version string is different than the git tag, do the conversions here"""
     def _identity(_, s): return s
     def _false(*_): return False
@@ -40,7 +48,7 @@ class SourceProgram:
     pre_patches = _none
     post_patches = _none
 
-    _default_attributes = ("Url", "source_directory", "pre_patches", "post_patches", "tag_to_version", "version_to_tag", "is_version_ignored", "Urls", "VersionTags", "Patches", "Variables", "Package")
+    _default_attributes = ("Url", "source_directory", "pre_patches", "post_patches", "tag_to_version", "version_to_tag", "is_version_ignored", "Urls", "VersionTags", "Patches", "Variables", "Package", "BaseImage", "Setup", "Build", "Artifacts", "ArtifactDir")
 
     def __init__(self, name) -> None:
         self.source_directory = None

@@ -32,8 +32,9 @@ shipyard build IMAGE PACKAGE [flags]
 
 - `--version=VERSION`: (Optional) The version of the source code to use. Defaults to the current/latest version defined in the shipyard project.
 - `--interactive` (or `-i`): (Optional) Drop into an interactive shell inside the build container upon failure or successful completion. This is useful for debugging build issues or inspecting artifacts.
-- `--artifacts=PATTERN`: (Optional) A glob pattern to filter which build artifacts are exported to the host. For example, `--artifacts="*.rpm"` or `--artifacts="proftpd-*.deb"`. If not specified, the driver's default pattern is used.
+- `--artifacts=PATTERN`: (Optional) A glob pattern to filter which build artifacts are exported to the host. For example, `--artifacts="*.rpm"` or `--artifacts="proftpd-*.deb"`. If not specified, the driver's default pattern (or the Shipfile's `Artifacts`, for a generic builder) is used.
 - `--patch=PATH`: (Optional) Path to a `.patch` file, a `shipfile.py`, or a directory containing a `shipfile.py`. This allows you to run the build command from any directory without needing to be in the project root. If a `.patch` file is provided, its content is used directly. If a Shipfile or directory is provided, Shipyard loads the project and exports the patch.
+- `--remote=HOST`: (Optional) Build on a remote Dagger engine instead of provisioning one locally, e.g. `tcp://buildhost:1234`, `ssh://user@buildhost`, or `docker-container://dagger-engine`. Your shipfile and source are synced to that engine the same way they'd be synced locally — only the container execution moves. Defaults to the `SHIPYARD_DAGGER_REMOTE` environment variable if set. Dagger's docs for custom runners list the host formats it accepts.
 
 ## Building a Package
 
@@ -78,6 +79,36 @@ Shipyard will:
 4. Apply the patches managed by Shipyard (or the provided patch file).
 5. Build the package.
 6. Export the resulting artifacts (e.g., `.deb`, `.rpm`, `.pkg.tar.zst`) to a `build-output` directory on your host.
+
+## Generic Builders
+
+If the Shipfile defines `Build` (see [Shipfile.md](./Shipfile.md#generic-builders)), `IMAGE` and
+`PACKAGE` are both optional: the image defaults to `BaseImage` and the package name defaults to
+`Name`. Shipyard clones the project itself, runs any CodePatches, then runs `Setup`/`Build` in the
+container and exports whatever matches `Artifacts`.
+
+```bash
+# Uses BaseImage, Setup, Build and Artifacts from the Shipfile
+shipyard build
+
+# Override the image but keep everything else from the Shipfile
+shipyard build golang:1.23
+```
+
+## Building on a Remote Engine
+
+By default Shipyard provisions a local Dagger engine (usually a local Docker daemon). Pass
+`--remote` to send the build to a Dagger engine running elsewhere instead — useful for
+offloading builds to a beefier machine or a shared build server:
+
+```bash
+shipyard build rockylinux:9 proftpd --remote=tcp://buildhost:1234
+shipyard build --remote=ssh://user@buildhost   # generic builder
+```
+
+Your shipfile and source are still read from your machine; only the container execution happens
+on the remote engine. Set `SHIPYARD_DAGGER_REMOTE` in your environment to avoid passing `--remote`
+on every invocation.
 
 ## Troubleshooting the Build
 

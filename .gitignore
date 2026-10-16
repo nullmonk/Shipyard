@@ -3,7 +3,9 @@ openssh-server/*
 *.diff
 *.patch
 shipfile.py
-!examples/openssh/shipfile.py
+!examples/**/shipfile.py
+!shipfile/shipfile.py
+build-output/
 
 logs/*
 

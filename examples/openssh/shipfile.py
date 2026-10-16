@@ -25,7 +25,7 @@ Or just build it directly with Dagger:
 
 import re
 
-from shipyard import CodePatch, CodeFile, Version
+from shipyard import CodePatch, CodeFile, Version, Patcher
 
 # Matches the modern "V_<major>_<minor>_P<portable>" tag scheme (e.g. V_9_9_P2,
 # V_10_6_P1). Older releases used messier schemes (V_1_2_3_PRE5, V_2_0_0_BETA1,
@@ -34,10 +34,10 @@ from shipyard import CodePatch, CodeFile, Version
 _TAG_RE = re.compile(r"^V_(?P<major>\d+)_(?P<minor>\d+)_P(?P<portable>\d+)$")
 
 
-class Shipfile:
+class Shipfile(Patcher):
     Name = "openssh"
     Url = "https://github.com/openssh/openssh-portable"
-    Package = "openssh"
+    PackageName = "openssh"
 
     # Upstream tags look like V_9_9_P2, V_10_6_P1, etc.
     VersionTags = "V_*"
@@ -49,7 +49,7 @@ class Shipfile:
 
     @staticmethod
     @CodePatch(r".*servconf\.c$")
-    def banner(file: CodeFile, version: Version):
+    def banner(file, version):
         """
         sshd fills in the default VersionAddendum (an empty string) here,
         which is later appended to SSH_VERSION when building the
@@ -66,7 +66,7 @@ class Shipfile:
         )
 
     @staticmethod
-    def is_version_ignored(version: Version) -> bool:
+    def is_version_ignored(version):
         # servconf.c's version_addendum default didn't exist before 6.0 or so,
         # but anything pre-7.0 is ancient enough to skip.
         if version < "7.0":
@@ -81,7 +81,7 @@ class Shipfile:
             # Old/pre-release tag scheme we don't support; return something
             # that is_version_ignored() will drop.
             return "0.0"
-        return f"{m['major']}.{m['minor']}p{m['portable']}"
+        return "{}.{}p{}".format(m.group("major"), m.group("minor"), m.group("portable"))
 
     @staticmethod
     def version_to_tag(v):
@@ -89,4 +89,4 @@ class Shipfile:
         v = v.lower()
         major, rest = v.split(".", 1)
         minor, portable = rest.split("p", 1)
-        return f"V_{major}_{minor}_P{portable}"
+        return "V_" + major + "_" + minor + "_P" + portable

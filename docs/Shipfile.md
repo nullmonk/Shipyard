@@ -65,3 +65,49 @@ Variables are only subsituted when running `shipyard export`.
 #### `version_to_tag(version) -> str`
 
 #### `is_version_ignored(version: shipyard.Version) -> bool`
+
+## Generic Builders
+
+Not every project is an OS package. A Shipfile becomes a **generic builder** by defining
+`Build`: instead of fetching source through a distro's package manager and building with
+`dpkg`/`rpmbuild`/`makepkg`, Shipyard clones `Url` itself, runs your CodePatches against it,
+drops it into a container you choose, and runs your own scripts. This is a good fit for
+anything that builds with its own toolchain (Go, Rust, Node, a plain Makefile, ...).
+
+```python
+class Shipfile:
+    Name = "myapp"
+    Url = "https://github.com/me/myapp"
+
+    BaseImage = "golang:1.22"
+    Setup = "apt-get update && apt-get install -y upx"   # optional, runs before Build
+    Build = "go build -o myapp ./cmd/myapp"
+    Artifacts = r"^myapp$"                                # regex matched against ArtifactDir
+```
+
+Run it with `shipyard build` (the image argument is optional since `BaseImage` is set):
+
+```bash
+shipyard build
+# or, to override the image:
+shipyard build golang:1.23
+```
+
+#### BaseImage
+The container image the project is built in, e.g. `"golang:1.22"`. Required unless `image` is
+passed explicitly to `shipyard build`.
+
+#### Setup
+An optional shell script (passed to `/bin/sh -c`) that prepares the build environment, e.g.
+installing extra system packages. Runs once, before `Build`.
+
+#### Build
+The shell script (passed to `/bin/sh -c`) that actually builds the project, with the patched
+source as its working directory. Defining `Build` is what marks a Shipfile as a generic builder.
+
+#### Artifacts
+A regex matched against the paths found in `ArtifactDir` (or `--artifacts` on the CLI, which
+takes precedence) to decide which build outputs get exported to the host.
+
+#### ArtifactDir
+Where to look for `Artifacts`. Defaults to the source directory (where `Build` ran).

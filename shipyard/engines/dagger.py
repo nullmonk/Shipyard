@@ -75,7 +75,116 @@ def generate_patch(ctr: dagger.Container, source_dir: str) -> dagger.File:
         ["/bin/sh", "-c", "git add -A -f && git diff --cached --binary > /tmp/shipyard.patch"]
     ).file("/tmp/shipyard.patch")
 
-async def build_package(image: str, package: str, patch_content: str = "", output_dir: str = "builds", interactive: bool = False, artifacts: str = "", shipyard_dir: str = ".", version: str = ""):
+async def find_files(container: dagger.Container, directory: str) -> list[str]:
+    """List all files under directory. This is the first thing that forces the (lazy)
+    build to run, so a build failure surfaces here."""
+    output = await (
+        container
+        .with_workdir(directory)
+        .with_exec(["find", ".", "-type", "f"])
+        .stdout()
+    )
+    return [f[2:] if f.startswith("./") else f for f in map(str.strip, output.splitlines()) if f]
+
+async def export_artifacts(ctr: dagger.Container, files: list[str], src_dir: str, artifact_pattern: str, output_dir: str) -> dagger.Container:
+    """Filter files (relative to src_dir) by artifact_pattern and export the matches to output_dir on the host"""
+    matches = [f for f in files if re.search(artifact_pattern, f)]
+    if not matches:
+        raise ValueError(f"The build produced no artifacts matching '{artifact_pattern}' in {src_dir}")
+    print(f"[*] Found {len(matches)} artifacts matching '{artifact_pattern}'")
+    ctr = ctr.with_exec(["mkdir", "-p", "/tmp/artifacts"])
+    ctr = ctr.with_new_file("/tmp/artifacts_list", "\n".join(matches))
+    copy_cmd = f"cd {src_dir} && while IFS= read -r f || [ -n \"$f\" ]; do cp \"$f\" /tmp/artifacts/; done < /tmp/artifacts_list"
+    ctr = ctr.with_exec(["/bin/sh", "-c", copy_cmd])
+    await ctr.directory("/tmp/artifacts").export(output_dir)
+
+    print(f"[+] Build complete. Artifacts exported to {output_dir}")
+    for root, dirs, files in os.walk(output_dir):
+        for file in files:
+            print(f"  - {file}")
+    return ctr
+
+def use_remote_engine(remote: str):
+    """Point the Dagger CLI at a remote engine instead of provisioning one locally.
+
+    Accepts any runner host the Dagger CLI understands, e.g.
+    tcp://host:1234, ssh://user@host, docker-container://name, kube-pod://name.
+    """
+    if remote:
+        os.environ["_EXPERIMENTAL_DAGGER_RUNNER_HOST"] = remote
+        print(f"[*] Building on remote Dagger engine: {remote}")
+
+async def build_generic(shipyard_dir: str, image: str, patch_content: str = "", output_dir: str = "builds", interactive: bool = False, artifacts: str = "", version: str = "", remote: str = ""):
+    """Build a 'generic' Shipfile: one that defines its own BaseImage/Setup/Build/Artifacts
+    instead of relying on a distro's packaging tools (see Shipfile.Build)."""
+    from shipyard.patches import Patches
+
+    use_remote_engine(remote)
+
+    async with dagger.Connection(dagger.Config(log_output=sys.stderr)) as client:
+        ctr = None
+        ctr_pre_build = None
+        try:
+            p = Patches(shipyard_dir, pull=True)
+            info = p.infoObject
+            if version:
+                p._checkout(version)
+            ver = p._ver or "src"
+            source_name = f"{info.Name}-{ver}"
+            source_dir = os.path.abspath(info.Directory)
+            print(f"[*] Starting generic build for {info.Name} on {image}")
+
+            # 1. Run the shipfile's CodePatches against the pristine checkout
+            host_source = client.host().directory(source_dir, exclude=[".git/"])
+            patched = run_shipfile(client, host_source, shipyard_dir, source_name, str(ver))
+
+            # 2. Build container: base image + patched source
+            workdir = f"/work/{source_name}"
+            ctr = client.container().from_(image).with_directory(workdir, patched).with_workdir(workdir)
+
+            # 3. Apply any extra raw patch passed on the CLI directly to the tree
+            if patch_content.strip():
+                ctr = (
+                    ctr.with_new_file("/tmp/shipyard.patch", patch_content)
+                    .with_exec(["/bin/sh", "-c", "patch -p1 < /tmp/shipyard.patch"])
+                )
+
+            # 4. Setup + Build scripts defined by the Shipfile
+            if info.Setup:
+                ctr = ctr.with_exec(["/bin/sh", "-c", info.Setup])
+            if not info.Build:
+                raise ValueError("Generic Shipfiles must define a 'Build' script")
+            ctr_pre_build = ctr
+            ctr = ctr.with_exec(["/bin/sh", "-c", info.Build])
+
+            artifact_pattern = artifacts or info.Artifacts
+            if not artifact_pattern:
+                raise ValueError("Generic Shipfiles must define 'Artifacts' (a regex matched against build output), or pass --artifacts")
+            src_dir = info.ArtifactDir or workdir
+
+            os.makedirs(output_dir, exist_ok=True)
+            print(f"[*] listing artifacts in {src_dir}...")
+            files = await find_files(ctr, src_dir)
+            ctr = await export_artifacts(ctr, files, src_dir, artifact_pattern, output_dir)
+
+            if interactive:
+                print("[*] Build successful. Dropping into interactive shell...")
+                await ctr.terminal().sync()
+
+        except Exception as e:
+            print(f"[!] Build failed: {e}")
+            if interactive:
+                target_ctr = ctr_pre_build or ctr
+                if target_ctr:
+                    print("[*] Dropping into interactive shell...")
+                    await target_ctr.terminal().sync()
+                else:
+                    print("[!] No container available to drop into.")
+            else:
+                raise e
+
+async def build_package(image: str, package: str, patch_content: str = "", output_dir: str = "builds", interactive: bool = False, artifacts: str = "", shipyard_dir: str = ".", version: str = "", remote: str = ""):
+    use_remote_engine(remote)
     async with dagger.Connection(dagger.Config(log_output=sys.stderr)) as client:
         driver = get_driver(image)
         print(f"[*] Starting build for {package} on {image}")
@@ -120,21 +229,7 @@ async def build_package(image: str, package: str, patch_content: str = "", outpu
             src_dir = driver.get_artifact_dir()
             print(f"[*] listing artifacts in {src_dir}...")
             files = await driver.list_artifacts(ctr)
-            matches = [f for f in files if re.search(artifact_pattern, f)]
-            if not matches:
-                raise ValueError(f"The build produced no artifacts matching '{artifact_pattern}' in {src_dir}")
-            else:
-                print(f"[*] Found {len(matches)} artifacts matching '{artifact_pattern}'")
-                ctr = ctr.with_exec(["mkdir", "-p", "/tmp/artifacts"])
-                ctr = ctr.with_new_file("/tmp/artifacts_list", "\n".join(matches))
-                copy_cmd = f"cd {src_dir} && while IFS= read -r f || [ -n \"$f\" ]; do cp \"$f\" /tmp/artifacts/; done < /tmp/artifacts_list"
-                ctr = ctr.with_exec(["/bin/sh", "-c", copy_cmd])
-                await ctr.directory("/tmp/artifacts").export(output_dir)
-
-                print(f"[+] Build complete. Artifacts exported to {output_dir}")
-                for root, dirs, files in os.walk(output_dir):
-                    for file in files:
-                        print(f"  - {file}")
+            ctr = await export_artifacts(ctr, files, src_dir, artifact_pattern, output_dir)
 
             if interactive:
                 print("[*] Build successful. Dropping into interactive shell...")
