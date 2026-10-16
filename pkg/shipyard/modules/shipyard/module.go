@@ -27,6 +27,7 @@ func init() {
 			py.MustNewMethod("CodePatch", codePatchFactory, 0, "CodePatch(*files, versions=[], required=True) -> decorator"),
 			py.MustNewMethod("Patch", codePatchFactory, 0, "Alias for CodePatch"),
 			py.MustNewMethod("Run", runFn, 0, "Run(cmd, stdin='') -> RunResult  [build phase only]"),
+			py.MustNewMethod("Variable", variableFactory, 0, "Variable(description, default='', validate=None) -> decorator"),
 		},
 		CodeSrc: codeSrc,
 	})

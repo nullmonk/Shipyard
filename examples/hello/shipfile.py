@@ -1,12 +1,16 @@
-from shipyard import CodePatch, CodeFile, Version, Builder
+from shipyard import CodePatch, CodeFile, Version, Builder, Run
 
 class Shipfile(Builder):
     Name = "hello"
     PackageName = "hello"
     BaseImage = "golang:1.22-alpine"
-    Setup = "echo 'setup completed'"
-    Build = "go build -o hello main.go"
     Artifacts = r"^hello$"
+
+    def setup(self):
+        Run("echo 'setup completed'")
+
+    def build(self):
+        Run("go build -o hello main.go")
 
     @staticmethod
     @CodePatch(r".*main\.go$")

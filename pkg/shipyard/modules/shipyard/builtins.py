@@ -161,13 +161,10 @@ class Shipfile:
     IgnoredVersions = []
     Artifacts = ""
     ArtifactDir = ""
-    Variables = {}
     PackageName = ""
     Package = ""
     Repository = ""
     BaseImage = ""
-    Setup = ""
-    Build = ""
     Patches = "patches/"
 
     @staticmethod
@@ -199,11 +196,11 @@ class Shipfile:
                     pass
             elif isinstance(pn, str):
                 pkg = pn
-        has_pkg = bool(pkg)
+        has_pkg = True if pkg else False
 
         url = getattr(self, "Url", "") or getattr(self, "URL", "")
         urls = getattr(self, "Urls", []) or getattr(self, "URLS", [])
-        has_url = bool(url) or (bool(urls) and len(urls) > 0)
+        has_url = (True if url else False) or (True if (urls and len(urls) > 0) else False)
 
         if not (has_pkg or has_url):
             raise ValueError(
@@ -222,6 +219,21 @@ class Shipfile:
                         "invalid Url in Urls '{}': must be a git repo or archive (.tar.gz, .tgz, .zip)".format(u)
                     )
 
+        # Validate variables
+        cls = self if isinstance(self, type) else type(self)
+        inst = self if not isinstance(self, type) else None
+        for name in dir(cls):
+            val = getattr(cls, name, None)
+            if getattr(val, "__is_variable__", False):
+                res = val(inst) if callable(val) else val
+                if not isinstance(res, str):
+                    raise TypeError("Variable '{}' must be a string".format(name))
+                v_fn = getattr(val, "__variable_validate__", None)
+                if callable(v_fn):
+                    err = v_fn(res)
+                    if err:
+                        raise ValueError("Variable '{}' validation failed: {}".format(name, err))
+
 
 class Patcher(Shipfile):
     Patches = "patches/"
@@ -230,7 +242,7 @@ class Patcher(Shipfile):
     def post_patch(self, ctx=None): pass
 
     def validate(self):
-        super().validate()
+        Shipfile.validate(self)
         cls = self if isinstance(self, type) else type(self)
         has_codepatch = False
         for name in dir(cls):
@@ -253,7 +265,7 @@ class Builder(Shipfile):
     def build(self, ctx=None): pass
 
     def validate(self):
-        super().validate()
+        Shipfile.validate(self)
         artifacts = getattr(self, "Artifacts", "")
         if not artifacts:
             raise ValueError("Builder requires an artifacts regex")
@@ -263,9 +275,7 @@ class Builder(Shipfile):
             raise ValueError("Builder Artifacts regex '{}' is invalid: {}".format(artifacts, e))
 
         cls = self if isinstance(self, type) else type(self)
-        setup_val = getattr(self, "Setup", "")
-        build_val = getattr(self, "Build", "")
-        has_setup = bool(setup_val) or (getattr(cls, "setup", None) is not Builder.setup)
-        has_build = bool(build_val) or (getattr(cls, "build", None) is not Builder.build)
+        has_setup = getattr(cls, "setup", None) is not Builder.setup
+        has_build = getattr(cls, "build", None) is not Builder.build
         if not (has_setup or has_build):
-            raise ValueError("Builder requires setup or build (script or function)")
+            raise ValueError("Builder requires setup or build function")

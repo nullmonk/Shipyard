@@ -25,7 +25,7 @@ Or just build it directly with Dagger:
 
 import re
 
-from shipyard import CodePatch, CodeFile, Version, Patcher
+from shipyard import CodePatch, CodeFile, Version, Patcher, Variable
 
 # Matches the modern "V_<major>_<minor>_P<portable>" tag scheme (e.g. V_9_9_P2,
 # V_10_6_P1). Older releases used messier schemes (V_1_2_3_PRE5, V_2_0_0_BETA1,
@@ -42,10 +42,9 @@ class Shipfile(Patcher):
     # Upstream tags look like V_9_9_P2, V_10_6_P1, etc.
     VersionTags = "V_*"
 
-    # Swappable without touching the patch logic itself
-    Variables = {
-        "__BANNER__": "opensource is good",
-    }
+    @Variable("Default SSH version addendum / banner", validate=lambda v: "banner must not be empty" if not v.strip() else None)
+    def __BANNER__(self):
+        return "opensource is good"
 
     @staticmethod
     @CodePatch(r".*servconf\.c$")

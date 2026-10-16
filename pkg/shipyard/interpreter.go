@@ -10,6 +10,9 @@ import (
 
 	// Blank imports register the built-in Python modules before any interpreter
 	// is created; order does not matter.
+	_ "shipyard/pkg/shipyard/modules/hashlib"
+	_ "shipyard/pkg/shipyard/modules/json"
+	_ "shipyard/pkg/shipyard/modules/ospath"
 	_ "shipyard/pkg/shipyard/modules/re"
 	"shipyard/pkg/shipyard/modules/shipyard"
 )

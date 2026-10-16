@@ -3,6 +3,8 @@ package shipmod
 import (
 	"bytes"
 	"fmt"
+	"io"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -131,8 +133,17 @@ func runFn(self py.Object, args py.Tuple, kwargs py.StringDict) (py.Object, erro
 		cmd.Stdin = strings.NewReader(stdinStr)
 	}
 	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	quiet := false
+	if q, ok := kwargs["quiet"]; ok && q != py.False && q != py.None {
+		quiet = true
+	}
+	if !quiet {
+		cmd.Stdout = io.MultiWriter(&stdout, os.Stdout)
+		cmd.Stderr = io.MultiWriter(&stderr, os.Stderr)
+	} else {
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+	}
 
 	err := cmd.Run()
 	rc := 0
@@ -142,6 +153,14 @@ func runFn(self py.Object, args py.Tuple, kwargs py.StringDict) (py.Object, erro
 		} else {
 			return nil, py.ExceptionNewf(py.OSError, "Run() failed to start %q: %v", argv[0], err)
 		}
+	}
+
+	check := true
+	if c, ok := kwargs["check"]; ok {
+		check = (c != py.False && c != py.None)
+	}
+	if check && rc != 0 {
+		return nil, py.ExceptionNewf(py.RuntimeError, "Command %q failed with exit code %d", argv[0], rc)
 	}
 
 	return &RunResult{

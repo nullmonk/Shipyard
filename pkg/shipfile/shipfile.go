@@ -27,8 +27,9 @@ type Shipfile struct {
 	Build           string
 	Artifacts       string
 	ArtifactDir     string
-	Variables       map[string]string
-	Patches           string
+	Variables            map[string]string
+	VariableDescriptions map[string]string
+	Patches              string
 	HasCodePatches    bool
 	HasPatchFiles     bool
 	ImplementsPatcher bool
@@ -90,6 +91,7 @@ func Load(path string, interp *shipyard.Interpreter) (*Shipfile, error) {
 
 	mod, err := interp.RunShipfile(absPath)
 	if err != nil {
+		py.TracebackDump(err)
 		return nil, fmt.Errorf("run shipfile %s: %w", absPath, err)
 	}
 
@@ -111,10 +113,11 @@ func Load(path string, interp *shipyard.Interpreter) (*Shipfile, error) {
 		BaseImage:   getAttrString(sfClass, "BaseImage"),
 		Setup:       getAttrString(sfClass, "Setup"),
 		Build:       getAttrString(sfClass, "Build"),
-		Artifacts:   getAttrString(sfClass, "Artifacts"),
-		ArtifactDir: getAttrString(sfClass, "ArtifactDir"),
-		Patches:     getAttrString(sfClass, "Patches"),
-		Variables:   getAttrStringMap(sfClass, "Variables"),
+		Artifacts:            getAttrString(sfClass, "Artifacts"),
+		ArtifactDir:          getAttrString(sfClass, "ArtifactDir"),
+		Patches:              getAttrString(sfClass, "Patches"),
+		Variables:            make(map[string]string),
+		VariableDescriptions: make(map[string]string),
 	}
 
 	if sf.Patches == "" {
@@ -124,9 +127,64 @@ func Load(path string, interp *shipyard.Interpreter) (*Shipfile, error) {
 		sf.VersionTags = "*"
 	}
 
-	// Detect CodePatches and method overrides on the Shipfile class and intermediate classes
+	inst, _ := py.Call(sfClass, nil, nil)
 	if typ, ok := sfClass.(*py.Type); ok {
 		checkDict := func(dict py.StringDict) {
+			for key, val := range dict {
+				if _, ok := sf.Variables[key]; ok {
+					continue
+				}
+				isVar := false
+				if _, err := py.GetAttrString(val, "__is_variable__"); err == nil {
+					isVar = true
+				}
+				if !isVar {
+					if t := val.Type(); t != nil && t.Name == "Variable" {
+						isVar = true
+					}
+				}
+				if isVar {
+					desc := ""
+					if d, err := py.GetAttrString(val, "__variable_description__"); err == nil {
+						if s, ok := d.(py.String); ok {
+							desc = string(s)
+						}
+					}
+					if desc == "" {
+						if d, err := py.GetAttrString(val, "description"); err == nil {
+							if s, ok := d.(py.String); ok {
+								desc = string(s)
+							}
+						}
+					}
+
+					var valStr string
+					if getValFn, err := py.GetAttrString(val, "get_value"); err == nil {
+						var res py.Object
+						var err error
+						if inst != nil {
+							res, err = py.Call(getValFn, py.Tuple{inst}, nil)
+						} else {
+							res, err = py.Call(getValFn, py.Tuple{}, nil)
+						}
+						if err == nil {
+							if s, ok := res.(py.String); ok {
+								valStr = string(s)
+							}
+						}
+					} else if inst != nil {
+						if attr, err := py.GetAttrString(inst, key); err == nil {
+							if s, ok := attr.(py.String); ok {
+								valStr = string(s)
+							}
+						}
+					}
+
+					sf.Variables[key] = valStr
+					sf.VariableDescriptions[key] = desc
+				}
+			}
+
 			if !sf.HasCodePatches {
 				for _, val := range dict {
 					fn := unwrapCallable(val)
@@ -204,6 +262,15 @@ func Load(path string, interp *shipyard.Interpreter) (*Shipfile, error) {
 	// Detect subclass implementation
 	sf.ImplementsPatcher = ImplementsSubclass(sfClass, "Patcher")
 	sf.ImplementsBuilder = ImplementsSubclass(sfClass, "Builder")
+
+	if inst != nil {
+		if valMeth, err := py.GetAttrString(inst, "validate"); err == nil {
+			if _, err := py.Call(valMeth, nil, nil); err != nil {
+				py.TracebackDump(err)
+				return nil, fmt.Errorf("shipfile %s validation error: %v", absPath, err)
+			}
+		}
+	}
 
 	return sf, nil
 }

@@ -454,4 +454,363 @@ has_py_def = hasattr(py_define, "search")
 	}
 }
 
+func TestOSPathModule(t *testing.T) {
+	interp := newTestInterpreter(t)
+
+	// Pure path manipulations must work even when file read is disabled
+	src := `
+import os
+import os.path
+import posixpath
+
+j1 = os.path.join("a", "b", "c")
+j2 = os.path.join("/a", "b/")
+d1 = os.path.dirname("/path/to/file.txt")
+b1 = os.path.basename("/path/to/file.txt")
+head, tail = os.path.split("/path/to/file.txt")
+root, ext = os.path.splitext("/path/to/file.tar.gz")
+norm = os.path.normpath("/a/b/../c/./d")
+is_abs1 = os.path.isabs("/a/b")
+is_abs2 = os.path.isabs("a/b")
+posix_j = posixpath.join("x", "y")
+`
+	mod, err := runPySrc(t, interp, src)
+	if err != nil {
+		t.Fatalf("run pure path manipulation error: %v", err)
+	}
+
+	if mod.Globals["j1"] != py.String("a/b/c") {
+		t.Fatalf("expected 'a/b/c', got %v", mod.Globals["j1"])
+	}
+	if mod.Globals["j2"] != py.String("/a/b/") {
+		t.Fatalf("expected '/a/b/', got %v", mod.Globals["j2"])
+	}
+	if mod.Globals["d1"] != py.String("/path/to") {
+		t.Fatalf("expected '/path/to', got %v", mod.Globals["d1"])
+	}
+	if mod.Globals["b1"] != py.String("file.txt") {
+		t.Fatalf("expected 'file.txt', got %v", mod.Globals["b1"])
+	}
+	if mod.Globals["head"] != py.String("/path/to") || mod.Globals["tail"] != py.String("file.txt") {
+		t.Fatalf("unexpected split result: %v, %v", mod.Globals["head"], mod.Globals["tail"])
+	}
+	if mod.Globals["root"] != py.String("/path/to/file.tar") || mod.Globals["ext"] != py.String(".gz") {
+		t.Fatalf("unexpected splitext result: %v, %v", mod.Globals["root"], mod.Globals["ext"])
+	}
+	if mod.Globals["norm"] != py.String("/a/c/d") {
+		t.Fatalf("expected '/a/c/d', got %v", mod.Globals["norm"])
+	}
+	if mod.Globals["is_abs1"] != py.True || mod.Globals["is_abs2"] != py.False {
+		t.Fatalf("unexpected isabs results: %v, %v", mod.Globals["is_abs1"], mod.Globals["is_abs2"])
+	}
+	if mod.Globals["posix_j"] != py.String("x/y") {
+		t.Fatalf("expected 'x/y', got %v", mod.Globals["posix_j"])
+	}
+
+	// File read operations (exists, isfile, isdir, getsize) must fail when file read is disabled
+	testFile := filepath.Join(t.TempDir(), "test.txt")
+	if err := os.WriteFile(testFile, []byte("hello world"), 0644); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+
+	_, err = runPySrc(t, interp, `import os.path; os.path.exists('`+testFile+`')`)
+	if err == nil || !strings.Contains(err.Error(), "PermissionError") {
+		t.Fatalf("expected PermissionError for os.path.exists when file read is disabled, got: %v", err)
+	}
+
+	_, err = runPySrc(t, interp, `import os.path; os.path.isfile('`+testFile+`')`)
+	if err == nil || !strings.Contains(err.Error(), "PermissionError") {
+		t.Fatalf("expected PermissionError for os.path.isfile when file read is disabled, got: %v", err)
+	}
+
+	// When file read is enabled, they must succeed
+	interp.SetFileRead(true)
+	checkSrc := `
+import os.path
+ex = os.path.exists('` + testFile + `')
+is_f = os.path.isfile('` + testFile + `')
+is_d = os.path.isdir('` + filepath.Dir(testFile) + `')
+sz = os.path.getsize('` + testFile + `')
+`
+	checkMod, err := runPySrc(t, interp, checkSrc)
+	if err != nil {
+		t.Fatalf("run file read check error: %v", err)
+	}
+	if checkMod.Globals["ex"] != py.True {
+		t.Fatalf("expected exists to be True")
+	}
+	if checkMod.Globals["is_f"] != py.True {
+		t.Fatalf("expected isfile to be True")
+	}
+	if checkMod.Globals["is_d"] != py.True {
+		t.Fatalf("expected isdir to be True")
+	}
+	if checkMod.Globals["sz"] != py.Int(11) {
+		t.Fatalf("expected getsize 11, got %v", checkMod.Globals["sz"])
+	}
+}
+
+func TestOSStatAndWalk(t *testing.T) {
+	interp := newTestInterpreter(t)
+
+	tmpDir := t.TempDir()
+	subDir := filepath.Join(tmpDir, "sub")
+	if err := os.Mkdir(subDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	testFile := filepath.Join(subDir, "hello.txt")
+	if err := os.WriteFile(testFile, []byte("test content 123"), 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	// 1. By default file read is disabled: os.stat and os.walk must fail
+	_, err := runPySrc(t, interp, `import os; os.stat('`+testFile+`')`)
+	if err == nil || !strings.Contains(err.Error(), "PermissionError") {
+		t.Fatalf("expected PermissionError for os.stat when file read is disabled, got: %v", err)
+	}
+
+	_, err = runPySrc(t, interp, `import os; list(os.walk('`+tmpDir+`'))`)
+	if err == nil || !strings.Contains(err.Error(), "PermissionError") {
+		t.Fatalf("expected PermissionError for os.walk when file read is disabled, got: %v", err)
+	}
+
+	// 2. Enable file read: os.stat and os.walk must succeed
+	interp.SetFileRead(true)
+
+	statSrc := `
+import os
+st = os.stat('` + testFile + `')
+size_attr = st.st_size
+size_idx = st[6]
+st_len = len(st)
+has_mode = hasattr(st, "st_mode")
+has_mtime = hasattr(st, "st_mtime")
+`
+	statMod, err := runPySrc(t, interp, statSrc)
+	if err != nil {
+		t.Fatalf("os.stat run error: %v", err)
+	}
+
+	expectedLen := int64(len("test content 123"))
+	if statMod.Globals["size_attr"] != py.Int(expectedLen) {
+		t.Fatalf("expected st_size %d, got %v", expectedLen, statMod.Globals["size_attr"])
+	}
+	if statMod.Globals["size_idx"] != py.Int(expectedLen) {
+		t.Fatalf("expected st[6] %d, got %v", expectedLen, statMod.Globals["size_idx"])
+	}
+	if statMod.Globals["st_len"] != py.Int(10) {
+		t.Fatalf("expected len(st) 10, got %v", statMod.Globals["st_len"])
+	}
+	if statMod.Globals["has_mode"] != py.True || statMod.Globals["has_mtime"] != py.True {
+		t.Fatalf("expected stat to have st_mode and st_mtime")
+	}
+
+	// Test os.walk
+	walkSrc := `
+import os
+walk_result = []
+for root, dirs, files in os.walk('` + tmpDir + `'):
+    walk_result.append((root, list(dirs), list(files)))
+`
+	walkMod, err := runPySrc(t, interp, walkSrc)
+	if err != nil {
+		t.Fatalf("os.walk run error: %v", err)
+	}
+
+	wRes, ok := walkMod.Globals["walk_result"].(*py.List)
+	if !ok || len(wRes.Items) != 2 {
+		t.Fatalf("expected 2 directories walked, got %v", walkMod.Globals["walk_result"])
+	}
+}
+
+func TestJSONModule(t *testing.T) {
+	interp := newTestInterpreter(t)
+
+	jsonSrc := `
+import json
+
+data = {
+    "name": "shipyard",
+    "version": 1,
+    "pi": 3.14,
+    "active": True,
+    "tags": ["ci", "cd"],
+    "meta": None
+}
+
+dumped = json.dumps(data)
+loaded = json.loads(dumped)
+
+name_ok = loaded["name"] == "shipyard"
+ver_ok = loaded["version"] == 1
+tags_len = len(loaded["tags"])
+first_tag = loaded["tags"][0]
+meta_is_none = loaded["meta"] is None
+active_ok = loaded["active"] is True
+`
+	mod, err := runPySrc(t, interp, jsonSrc)
+	if err != nil {
+		t.Fatalf("json test error: %v", err)
+	}
+
+	if mod.Globals["name_ok"] != py.True {
+		t.Fatalf("expected name_ok True")
+	}
+	if mod.Globals["ver_ok"] != py.True {
+		t.Fatalf("expected ver_ok True")
+	}
+	if mod.Globals["tags_len"] != py.Int(2) {
+		t.Fatalf("expected tags_len 2, got %v", mod.Globals["tags_len"])
+	}
+	if mod.Globals["first_tag"] != py.String("ci") {
+		t.Fatalf("expected first_tag 'ci', got %v", mod.Globals["first_tag"])
+	}
+	if mod.Globals["meta_is_none"] != py.True {
+		t.Fatalf("expected meta_is_none True")
+	}
+	if mod.Globals["active_ok"] != py.True {
+		t.Fatalf("expected active_ok True")
+	}
+}
+
+func TestHashlibModule(t *testing.T) {
+	interp := newTestInterpreter(t)
+
+	hashSrc := `
+import hashlib
+
+# sha256
+h256 = hashlib.sha256(b"hello world")
+h256_hex = h256.hexdigest()
+
+# incremental update
+h_inc = hashlib.sha256()
+h_inc.update(b"hello ")
+h_inc.update(b"world")
+h_inc_hex = h_inc.hexdigest()
+
+# sha512
+h512 = hashlib.sha512(b"hello world")
+h512_hex = h512.hexdigest()
+
+# md5
+hmd5 = hashlib.md5(b"hello world")
+hmd5_hex = hmd5.hexdigest()
+
+# sha1
+hsha1 = hashlib.sha1(b"hello world")
+hsha1_hex = hsha1.hexdigest()
+
+# new constructor
+hnew = hashlib.new("sha256", b"hello world")
+hnew_hex = hnew.hexdigest()
+`
+	mod, err := runPySrc(t, interp, hashSrc)
+	if err != nil {
+		t.Fatalf("hashlib test error: %v", err)
+	}
+
+	expectedSHA256 := "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+	if mod.Globals["h256_hex"] != py.String(expectedSHA256) {
+		t.Fatalf("expected sha256 %s, got %v", expectedSHA256, mod.Globals["h256_hex"])
+	}
+	if mod.Globals["h_inc_hex"] != py.String(expectedSHA256) {
+		t.Fatalf("expected incremental sha256 %s, got %v", expectedSHA256, mod.Globals["h_inc_hex"])
+	}
+	if mod.Globals["hnew_hex"] != py.String(expectedSHA256) {
+		t.Fatalf("expected new sha256 %s, got %v", expectedSHA256, mod.Globals["hnew_hex"])
+	}
+
+	expectedMD5 := "5eb63bbbe01eeed093cb22bb8f5acdc3"
+	if mod.Globals["hmd5_hex"] != py.String(expectedMD5) {
+		t.Fatalf("expected md5 %s, got %v", expectedMD5, mod.Globals["hmd5_hex"])
+	}
+
+	expectedSHA1 := "2aae6c35c94fcfb415dbe95f408b9ce91ee846ed"
+	if mod.Globals["hsha1_hex"] != py.String(expectedSHA1) {
+		t.Fatalf("expected sha1 %s, got %v", expectedSHA1, mod.Globals["hsha1_hex"])
+	}
+
+	expectedSHA512 := "309ecc489c12d6eb4cc40f50c902f2b4d0ed77ee511a7c7a9bcd3ca86d4cd86f989dd35bc5ff499670da34255b45b0cfd830e81f605dcf7dc5542e93ae9cd76f"
+	if mod.Globals["h512_hex"] != py.String(expectedSHA512) {
+		t.Fatalf("expected sha512 %s, got %v", expectedSHA512, mod.Globals["h512_hex"])
+	}
+}
+
+func TestVariableDecorator(t *testing.T) {
+	interp := newTestInterpreter(t)
+
+	// 1. Valid string variable
+	validSrc := `
+from shipyard import Variable
+
+@Variable("A banner comment")
+def BANNER():
+    return "opensource is good"
+`
+	if _, err := runPySrc(t, interp, validSrc); err != nil {
+		t.Fatalf("expected valid variable to succeed, got: %v", err)
+	}
+
+	// 2. Variable with non-string return value must fail
+	nonStringSrc := `
+from shipyard import Variable
+
+@Variable("Number port")
+def PORT():
+    return 8080
+`
+	if _, err := runPySrc(t, interp, nonStringSrc); err == nil {
+		t.Fatalf("expected variable with int value to fail, got nil")
+	}
+
+	// 3. Validator returning None (valid)
+	validFnSrc := `
+from shipyard import Variable
+
+def check_banner(val):
+    if len(val) < 3:
+        return "too short"
+    return None
+
+@Variable("Banner comment", validate=check_banner)
+def BANNER():
+    return "hello world"
+`
+	if _, err := runPySrc(t, interp, validFnSrc); err != nil {
+		t.Fatalf("expected valid validator to succeed, got: %v", err)
+	}
+
+	// 4. Validator returning error string (invalid)
+	invalidFnSrc := `
+from shipyard import Variable
+
+def check_banner(val):
+    if len(val) < 10:
+        return "too short, must be at least 10 chars"
+    return None
+
+@Variable("Banner comment", validate=check_banner)
+def BANNER():
+    return "short"
+`
+	if _, err := runPySrc(t, interp, invalidFnSrc); err == nil {
+		t.Fatalf("expected validator returning error string to fail, got nil")
+	}
+
+	// 5. Non-string description must fail
+	badDescSrc := `
+from shipyard import Variable
+
+@Variable(12345)
+def FOO():
+    return "bar"
+`
+	if _, err := runPySrc(t, interp, badDescSrc); err == nil {
+		t.Fatalf("expected non-string description to fail, got nil")
+	}
+}
+
+
+
 

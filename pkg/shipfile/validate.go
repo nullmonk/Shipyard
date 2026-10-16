@@ -129,9 +129,9 @@ func (s *Shipfile) Validate() error {
 			errs = append(errs, fmt.Sprintf("Builder Artifacts regex %q is invalid: %v", s.Artifacts, err))
 		}
 
-		hasBuildStep := s.Setup != "" || s.Build != "" || s.HasSetup || s.HasBuild
+		hasBuildStep := s.HasSetup || s.HasBuild || s.Setup != "" || s.Build != ""
 		if !hasBuildStep {
-			errs = append(errs, "Builder requires setup or build (script or function)")
+			errs = append(errs, "Builder requires setup or build function")
 		}
 	}
 
