@@ -23,6 +23,7 @@ func init() {
 			py.MustNewMethod("sub", reSubFn, 0, "sub(pattern, repl, string[, count]) -> string"),
 			py.MustNewMethod("split", reSplitFn, 0, "split(pattern, string[, maxsplit]) -> list"),
 			py.MustNewMethod("findall", reFindallFn, 0, "findall(pattern, string) -> list of strings"),
+			py.MustNewMethod("escape", reEscapeFn, 0, "escape(pattern) -> string"),
 		},
 	})
 }
@@ -378,6 +379,14 @@ func reFindallFn(self py.Object, args py.Tuple) (py.Object, error) {
 		return nil, err
 	}
 	return doFindall(p, src), nil
+}
+
+func reEscapeFn(self py.Object, args py.Tuple) (py.Object, error) {
+	s, err := singleStr(args, "escape")
+	if err != nil {
+		return nil, err
+	}
+	return py.String(regexp.QuoteMeta(s)), nil
 }
 
 // ── arg helpers ───────────────────────────────────────────────────────────────

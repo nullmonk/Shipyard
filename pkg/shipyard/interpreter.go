@@ -11,7 +11,7 @@ import (
 	// Blank imports register the built-in Python modules before any interpreter
 	// is created; order does not matter.
 	_ "shipyard/pkg/shipyard/modules/re"
-	_ "shipyard/pkg/shipyard/modules/shipyard"
+	"shipyard/pkg/shipyard/modules/shipyard"
 )
 
 // Interpreter is a gpython context with the shipyard Python package on sys.path.
@@ -32,6 +32,10 @@ func New(shipyardPkg string) (*Interpreter, error) {
 	ctx := py.NewContext(opts)
 	sb, err := newSandbox(ctx)
 	if err != nil {
+		ctx.Close()
+		return nil, err
+	}
+	if err := shipmod.InitCodesearch(ctx); err != nil {
 		ctx.Close()
 		return nil, err
 	}

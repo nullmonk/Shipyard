@@ -387,3 +387,71 @@ has_env = hasattr(ctx, "env")
 	}
 }
 
+func TestShipyardCodesearchBuiltin(t *testing.T) {
+	interp := newTestInterpreter(t)
+
+	// Top-level 'import codesearch' should not exist
+	_, err := runPySrc(t, interp, "import codesearch")
+	if err == nil {
+		t.Fatalf("expected 'import codesearch' to fail (it should only be available under shipyard.codesearch)")
+	}
+
+	// 'from shipyard.codesearch import c, go, python' should work
+	src := `
+from shipyard.codesearch import c, go, python
+
+c_pat = c.find_func("main")
+go_pat = go.find_func("main")
+py_pat = python.find_func("main")
+
+has_c_search = hasattr(c_pat, "search")
+has_go_search = hasattr(go_pat, "search")
+has_py_search = hasattr(py_pat, "search")
+`
+	mod, err := runPySrc(t, interp, src)
+	if err != nil {
+		py.TracebackDump(err)
+		t.Fatalf("run error: %v", err)
+	}
+
+	if mod.Globals["has_c_search"] != py.True {
+		t.Fatalf("expected c.find_func to return a regex pattern")
+	}
+	if mod.Globals["has_go_search"] != py.True {
+		t.Fatalf("expected go.find_func to return a regex pattern")
+	}
+	if mod.Globals["has_py_search"] != py.True {
+		t.Fatalf("expected python.find_func to return a regex pattern")
+	}
+
+	// Submodule direct import should work
+	src2 := `
+import shipyard
+has_cs = hasattr(shipyard, "codesearch")
+c_mod = shipyard.codesearch.c
+go_mod = shipyard.codesearch.go
+py_mod = shipyard.codesearch.python
+
+from shipyard.codesearch.c import find_func as c_find_func
+from shipyard.codesearch.go import find_func as go_find_func
+from shipyard.codesearch.python import find_func as py_find_func
+
+c_define = c_mod.find_define("VERSION")
+go_define = go_mod.find_define("VERSION")
+py_define = py_mod.find_define("VERSION")
+
+has_c_def = hasattr(c_define, "search")
+has_go_def = hasattr(go_define, "search")
+has_py_def = hasattr(py_define, "search")
+`
+	mod2, err := runPySrc(t, interp, src2)
+	if err != nil {
+		py.TracebackDump(err)
+		t.Fatalf("run error: %v", err)
+	}
+	if mod2.Globals["has_c_def"] != py.True || mod2.Globals["has_go_def"] != py.True || mod2.Globals["has_py_def"] != py.True {
+		t.Fatalf("expected direct submodule imports to work")
+	}
+}
+
+
