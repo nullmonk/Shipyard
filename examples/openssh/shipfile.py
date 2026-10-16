@@ -42,13 +42,17 @@ class Shipfile(Patcher):
     # Upstream tags look like V_9_9_P2, V_10_6_P1, etc.
     VersionTags = "V_*"
 
-    @Variable("Default SSH version addendum / banner", validate=lambda v: "banner must not be empty" if not v.strip() else None)
-    def __BANNER__(self):
-        return "opensource is good"
+    Variables = [
+        Variable(
+            "__BANNER__",
+            "Default SSH version addendum / banner",
+            "opensource is good",
+            validate=lambda v: "banner must not be empty" if not v.strip() else None,
+        ),
+    ]
 
-    @staticmethod
     @CodePatch(r".*servconf\.c$")
-    def banner(file, version):
+    def banner(file, ctx):
         """
         sshd fills in the default VersionAddendum (an empty string) here,
         which is later appended to SSH_VERSION when building the
@@ -60,7 +64,7 @@ class Shipfile(Patcher):
             'if (options->version_addendum == NULL)\n'
             '\t\toptions->version_addendum = xstrdup("");',
             'if (options->version_addendum == NULL)\n'
-            '\t\toptions->version_addendum = xstrdup("__BANNER__");',
+            '\t\toptions->version_addendum = xstrdup("' + ctx.variables["__BANNER__"] + '");',
             err="Cannot find default VersionAddendum assignment in {file}",
         )
 

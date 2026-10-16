@@ -31,7 +31,8 @@ func (d *codePatchDecorator) M__call__(args py.Tuple, kwargs py.StringDict) (py.
 }
 
 func codePatchFactory(self py.Object, args py.Tuple, kwargs py.StringDict) (py.Object, error) {
-	files := args
+	files := make(py.Tuple, len(args))
+	copy(files, args)
 
 	var versions py.Tuple
 	if v, ok := kwargs["versions"]; ok {

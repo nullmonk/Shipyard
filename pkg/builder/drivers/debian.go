@@ -65,10 +65,6 @@ func (d *DebianDriver) InstallBuildDeps(ctr *dagger.Container, pkg string) *dagg
 		WithExec([]string{"apt-get", "source", "-qq", pkg})
 }
 
-func (d *DebianDriver) PrepareSource(ctr *dagger.Container, pkg string) *dagger.Container {
-	return ctr
-}
-
 func (d *DebianDriver) GetSourceDir(ctx context.Context, ctr *dagger.Container, pkg string) (string, error) {
 	out, err := ctr.WithWorkdir("/tmp/build").WithExec([]string{"ls", "-F"}).Stdout(ctx)
 	if err != nil {
@@ -83,28 +79,8 @@ func (d *DebianDriver) GetSourceDir(ctx context.Context, ctr *dagger.Container, 
 	return "/tmp/build", nil
 }
 
-func (d *DebianDriver) ApplyPatch(ctx context.Context, ctr *dagger.Container, patchContent string, pkg string) (*dagger.Container, error) {
-	return ctr.
-		WithNewFile("/tmp/build/shipyard.patch", patchContent).
-		WithWorkdir("/tmp/build").
-		WithExec([]string{"/bin/bash", "-c", "cd */ && quilt import /tmp/build/shipyard.patch"}).
-		WithExec([]string{"/bin/bash", "-c", "cd */ && quilt push"}).
-		WithExec([]string{"/bin/bash", "-c", "cd */ && quilt refresh"}), nil
-}
-
-func (d *DebianDriver) Build(ctr *dagger.Container, pkg string) *dagger.Container {
-	return ctr.
-		WithEnvVariable("DEB_BUILD_OPTIONS", "notest nocheck").
-		WithEnvVariable("DEBUILD_DPKG_BUILDPACKAGE_OPTS", "-d").
-		WithWorkdir("/tmp/build").
-		WithExec([]string{"/bin/bash", "-c", "cd */ && debuild --no-lintian -d -uc -us -b"})
-}
-
-func (d *DebianDriver) GetArtifactPattern(pkg string) string {
-	return `.*\.deb$`
-}
-
-func (d *DebianDriver) GetArtifactDir() string {
-	return "/tmp/build"
-}
-
+func (d *DebianDriver) GetArtifactPattern(pkg string) string { return `.*\.deb$` }
+func (d *DebianDriver) GetArtifactDir() string               { return "/tmp/build" }
+func (d *DebianDriver) DistroName() string                   { return "debian" }
+func (d *DebianDriver) TopDir() string                       { return "/tmp/build" }
+func (d *DebianDriver) BuildEnvs() map[string]string         { return nil }

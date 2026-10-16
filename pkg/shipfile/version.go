@@ -1,4 +1,4 @@
-package shipyard
+package shipfile
 
 import (
 	"fmt"
@@ -46,10 +46,10 @@ func cmp(a, b Version) int {
 	return 0
 }
 
-func (v Version) Less(other Version) bool    { return cmp(v, other) < 0 }
-func (v Version) Greater(other Version) bool { return cmp(v, other) > 0 }
-func (v Version) Equal(other Version) bool   { return cmp(v, other) == 0 }
-func (v Version) LessEq(other Version) bool  { return cmp(v, other) <= 0 }
+func (v Version) Less(other Version) bool      { return cmp(v, other) < 0 }
+func (v Version) Greater(other Version) bool   { return cmp(v, other) > 0 }
+func (v Version) Equal(other Version) bool     { return cmp(v, other) == 0 }
+func (v Version) LessEq(other Version) bool    { return cmp(v, other) <= 0 }
 func (v Version) GreaterEq(other Version) bool { return cmp(v, other) >= 0 }
 
 func (v Version) String() string { return string(v) }

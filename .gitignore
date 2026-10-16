@@ -5,6 +5,7 @@ openssh-server/*
 shipfile.py
 !examples/**/shipfile.py
 !shipfile/shipfile.py
+!/shipfile.py
 build-output/
 
 logs/*
@@ -32,3 +33,6 @@ wheels/
 
 *.rpm
 *.deb
+
+# Built binaries
+bin/

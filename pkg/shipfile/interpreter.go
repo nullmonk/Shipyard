@@ -1,5 +1,4 @@
-// Package shipyard provides a gpython interpreter pre-configured to run shipfiles.
-package shipyard
+package shipfile
 
 import (
 	"path/filepath"
@@ -10,11 +9,11 @@ import (
 
 	// Blank imports register the built-in Python modules before any interpreter
 	// is created; order does not matter.
-	_ "shipyard/pkg/shipyard/modules/hashlib"
-	_ "shipyard/pkg/shipyard/modules/json"
-	_ "shipyard/pkg/shipyard/modules/ospath"
-	_ "shipyard/pkg/shipyard/modules/re"
-	"shipyard/pkg/shipyard/modules/shipyard"
+	_ "shipyard/pkg/shipfile/modules/hashlib"
+	_ "shipyard/pkg/shipfile/modules/json"
+	_ "shipyard/pkg/shipfile/modules/ospath"
+	_ "shipyard/pkg/shipfile/modules/re"
+	shipmod "shipyard/pkg/shipfile/modules/shipyard"
 )
 
 // Interpreter is a gpython context with the shipyard Python package on sys.path.
@@ -62,57 +61,38 @@ func (i *Interpreter) RunFile(path string) (*py.Module, error) {
 	return i.RunShipfile(path)
 }
 
-// Sandbox returns the Sandbox instance protecting this interpreter.
+// Sandbox returns the Sandbox controlling execution, file-read, env, and env-pass-through
+// permissions for this interpreter.
 func (i *Interpreter) Sandbox() *Sandbox {
 	return i.sandbox
 }
 
-// SetExecution toggles command execution permission (os.system, shipyard.Run).
-func (i *Interpreter) SetExecution(enabled bool) {
-	i.sandbox.SetExecution(enabled)
-}
-
-// ExecutionEnabled reports whether command execution is enabled.
-func (i *Interpreter) ExecutionEnabled() bool {
-	return i.sandbox.ExecutionEnabled()
-}
-
-// SetFileRead toggles filesystem read and directory access permission.
-func (i *Interpreter) SetFileRead(enabled bool) {
-	i.sandbox.SetFileRead(enabled)
-}
-
-// FileReadEnabled reports whether filesystem read is enabled.
-func (i *Interpreter) FileReadEnabled() bool {
-	return i.sandbox.FileReadEnabled()
-}
-
-// SetEnvPassThrough toggles environment variable pass-through from the host.
-func (i *Interpreter) SetEnvPassThrough(enabled bool) {
-	i.sandbox.SetEnvPassThrough(enabled)
-}
-
-// EnvPassThroughEnabled reports whether environment variable pass-through is enabled.
-func (i *Interpreter) EnvPassThroughEnabled() bool {
-	return i.sandbox.EnvPassThroughEnabled()
-}
-
-// EnableRun unlocks command execution (os.system, shipyard.Run) for this interpreter.
-// Call it before invoking setup or build phases, then DisableRun afterwards.
-func (i *Interpreter) EnableRun() error {
-	i.SetExecution(true)
-	return nil
-}
-
-// DisableRun locks command execution again after a build phase completes.
-func (i *Interpreter) DisableRun() error {
-	i.SetExecution(false)
-	return nil
+// LoadShipfile compiles and executes content as a shipfile, then validates it.
+// The full sandbox is active: no file reads or command execution during load.
+// Returns the parsed Shipfile on success.
+func (i *Interpreter) LoadShipfile(content string) (*Shipfile, error) {
+	sf, err := LoadString(content, i)
+	if err != nil {
+		return nil, err
+	}
+	if err := sf.Validate(); err != nil {
+		return nil, err
+	}
+	return sf, nil
 }
 
 // GetModule returns a module that has already been imported into the interpreter.
 func (i *Interpreter) GetModule(name string) (*py.Module, error) {
 	return i.ctx.GetModule(name)
+}
+
+// GetShipyardAttr returns an attribute from the imported shipyard module.
+func (i *Interpreter) GetShipyardAttr(name string) (py.Object, error) {
+	mod, err := i.ctx.GetModule("shipyard")
+	if err != nil {
+		return nil, err
+	}
+	return py.GetAttrString(mod, name)
 }
 
 // Context returns the underlying py.Context for low-level use.

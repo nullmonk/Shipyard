@@ -13,7 +13,7 @@ import (
 // RPMDriver implements package building for RPM-based Linux distributions.
 type RPMDriver struct {
 	Image         string
-	TopDir        string
+	topDir        string
 	RPMBuildArgs  string
 	EnableRepoCmd func(ctr *dagger.Container) *dagger.Container
 }
@@ -21,7 +21,7 @@ type RPMDriver struct {
 func NewRPMDriver(image string) *RPMDriver {
 	return &RPMDriver{
 		Image:        image,
-		TopDir:       "/tmp/build",
+		topDir:       "/tmp/build",
 		RPMBuildArgs: "",
 	}
 }
@@ -52,20 +52,16 @@ func (r *RPMDriver) Setup(ctr *dagger.Container) *dagger.Container {
 
 func (r *RPMDriver) InstallBuildDeps(ctr *dagger.Container, pkg string) *dagger.Container {
 	return ctr.
-		WithWorkdir(r.TopDir).
+		WithWorkdir(r.topDir).
 		WithExec([]string{"yum-builddep", "--skip-broken", "-y", pkg}).
-		WithExec([]string{"/bin/sh", "-c", fmt.Sprintf("echo '%%_topdir      %s' > ~/.rpmmacros", r.TopDir)}).
+		WithExec([]string{"/bin/sh", "-c", fmt.Sprintf("echo '%%_topdir      %s' > ~/.rpmmacros", r.topDir)}).
 		WithExec([]string{"yumdownloader", "--source", pkg}).
 		WithExec([]string{"/bin/sh", "-c", "rpm -ivh *.src.rpm"}).
 		WithExec([]string{"/bin/sh", "-c", fmt.Sprintf("rpmbuild %s -bp SPECS/*.spec", r.RPMBuildArgs)})
 }
 
-func (r *RPMDriver) PrepareSource(ctr *dagger.Container, pkg string) *dagger.Container {
-	return ctr
-}
-
 func (r *RPMDriver) GetSourceDir(ctx context.Context, ctr *dagger.Container, pkg string) (string, error) {
-	build := fmt.Sprintf("%s/BUILD", r.TopDir)
+	build := fmt.Sprintf("%s/BUILD", r.topDir)
 	out, err := ctr.WithWorkdir(build).WithExec([]string{"ls", "-F"}).Stdout(ctx)
 	if err != nil {
 		return "", fmt.Errorf("list rpm BUILD directory: %w", err)
@@ -96,77 +92,20 @@ func (r *RPMDriver) GetSourceDir(ctx context.Context, ctr *dagger.Container, pkg
 	return fmt.Sprintf("%s/%s", build, name), nil
 }
 
-func (r *RPMDriver) ApplyPatch(ctx context.Context, ctr *dagger.Container, patchContent string, pkg string) (*dagger.Container, error) {
-	entries, err := ctr.Directory(fmt.Sprintf("%s/SPECS", r.TopDir)).Entries(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("read SPECS entries: %w", err)
+func (r *RPMDriver) GetArtifactPattern(pkg string) string { return `.*\.rpm$` }
+func (r *RPMDriver) GetArtifactDir() string               { return fmt.Sprintf("%s/RPMS", r.topDir) }
+func (r *RPMDriver) DistroName() string                   { return "rpm" }
+func (r *RPMDriver) TopDir() string                       { return r.topDir }
+func (r *RPMDriver) BuildEnvs() map[string]string {
+	if r.RPMBuildArgs != "" {
+		return map[string]string{"SHIPYARD_RPM_ARGS": r.RPMBuildArgs}
 	}
-
-	var specFile string
-	for _, e := range entries {
-		if strings.HasSuffix(e, ".spec") {
-			specFile = e
-			break
-		}
-	}
-	if specFile == "" {
-		return nil, fmt.Errorf("no SPEC file found in %s/SPECS", r.TopDir)
-	}
-
-	specPath := fmt.Sprintf("%s/SPECS/%s", r.TopDir, specFile)
-	content, err := ctr.File(specPath).Contents(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("read spec file contents: %w", err)
-	}
-
-	rpmVerOut, err := ctr.WithExec([]string{"rpm", "--version"}).Stdout(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("rpm version: %w", err)
-	}
-
-	legacyMacro := isLegacyRPM(rpmVerOut)
-	newSpec, err := patchSpecFile(content, pkg, legacyMacro)
-	if err != nil {
-		return nil, err
-	}
-
-	return ctr.
-		WithNewFile(specPath, newSpec).
-		WithNewFile(fmt.Sprintf("%s/SOURCES/%s.patch", r.TopDir, pkg), patchContent), nil
+	return nil
 }
 
-func (r *RPMDriver) Build(ctr *dagger.Container, pkg string) *dagger.Container {
-	return ctr.
-		WithWorkdir(r.TopDir).
-		WithExec([]string{"/bin/sh", "-c", fmt.Sprintf("rpmbuild --define 'debug_package %%{nil}' --nocheck %s -bb SPECS/*.spec", r.RPMBuildArgs)})
-}
-
-func (r *RPMDriver) GetArtifactPattern(pkg string) string {
-	return `.*\.rpm$`
-}
-
-func (r *RPMDriver) GetArtifactDir() string {
-	return fmt.Sprintf("%s/RPMS", r.TopDir)
-}
-
-func isLegacyRPM(out string) bool {
-	fields := strings.Fields(out)
-	if len(fields) == 0 {
-		return false
-	}
-	ver := fields[len(fields)-1]
-	parts := strings.Split(ver, ".")
-	if len(parts) >= 2 {
-		major, _ := strconv.Atoi(parts[0])
-		minor, _ := strconv.Atoi(parts[1])
-		if major < 4 || (major == 4 && minor < 14) {
-			return true
-		}
-	}
-	return false
-}
-
-func patchSpecFile(content, pkg string, legacyMacro bool) (string, error) {
+// PatchSpecFile injects a shipyard patch declaration into an RPM spec file.
+// It is exported so the in-container build command can call it directly.
+func PatchSpecFile(content, pkg string, legacyMacro bool) (string, error) {
 	lines := strings.Split(content, "\n")
 
 	patchNumRe := regexp.MustCompile(`(?i)^Patch(\d+)\s*:`)
@@ -234,6 +173,24 @@ func patchSpecFile(content, pkg string, legacyMacro bool) (string, error) {
 	return strings.Join(lines, "\n") + "\n", nil
 }
 
+// IsLegacyRPM reports whether the RPM version string indicates a pre-4.14 release.
+func IsLegacyRPM(out string) bool {
+	fields := strings.Fields(out)
+	if len(fields) == 0 {
+		return false
+	}
+	ver := fields[len(fields)-1]
+	parts := strings.Split(ver, ".")
+	if len(parts) >= 2 {
+		major, _ := strconv.Atoi(parts[0])
+		minor, _ := strconv.Atoi(parts[1])
+		if major < 4 || (major == 4 && minor < 14) {
+			return true
+		}
+	}
+	return false
+}
+
 // RockyDriver
 func NewRockyDriver(image string) *RPMDriver {
 	d := NewRPMDriver(image)
@@ -273,7 +230,7 @@ func NewCentOSDriver(image string) *RPMDriver {
 func NewSUSEDriver(image string) *RPMDriver {
 	return &RPMDriver{
 		Image:        image,
-		TopDir:       "/usr/src/packages",
+		topDir:       "/usr/src/packages",
 		RPMBuildArgs: "--nodeps",
 		EnableRepoCmd: func(ctr *dagger.Container) *dagger.Container {
 			return ctr.
@@ -287,4 +244,3 @@ func NewSUSEDriver(image string) *RPMDriver {
 		},
 	}
 }
-

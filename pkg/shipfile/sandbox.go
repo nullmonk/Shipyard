@@ -1,16 +1,17 @@
-package shipyard
+package shipfile
 
 import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
 
 	"github.com/go-python/gpython/py"
-	ospath "shipyard/pkg/shipyard/modules/ospath"
-	"shipyard/pkg/shipyard/modules/shipyard"
+	ospath "shipyard/pkg/shipfile/modules/ospath"
+	shipmod "shipyard/pkg/shipfile/modules/shipyard"
 )
 
 var (
@@ -129,6 +130,42 @@ func (s *Sandbox) SetEnvPassThrough(enabled bool) {
 	s.syncEnvironLocked()
 }
 
+// SetEnv merges vars into the Python interpreter's os.environ dict.
+// Values are visible to Python code via os.environ and os.getenv regardless
+// of the EnvPassThrough setting.
+func (s *Sandbox) SetEnv(vars map[string]string) {
+	osMod, err := s.ctx.GetModule("os")
+	if err != nil {
+		return
+	}
+	envDict, ok := osMod.Globals["environ"].(py.StringDict)
+	if !ok {
+		return
+	}
+	for k, v := range vars {
+		envDict[k] = py.String(v)
+	}
+}
+
+// GetEnv returns a snapshot of the Python interpreter's os.environ dict.
+func (s *Sandbox) GetEnv() map[string]string {
+	osMod, err := s.ctx.GetModule("os")
+	if err != nil {
+		return nil
+	}
+	envDict, ok := osMod.Globals["environ"].(py.StringDict)
+	if !ok {
+		return nil
+	}
+	out := make(map[string]string, len(envDict))
+	for k, v := range envDict {
+		if sv, ok := v.(py.String); ok {
+			out[k] = string(sv)
+		}
+	}
+	return out
+}
+
 func (s *Sandbox) syncEnvironLocked() {
 	osMod, err := s.ctx.GetModule("os")
 	if err != nil {
@@ -157,6 +194,61 @@ func (s *Sandbox) syncEnvironLocked() {
 	}
 }
 
+// builtinDir implements dir([object]) -> sorted list of attribute names.
+// Walks the type's Dict and base chain to collect names.
+func builtinDir(_ py.Object, args py.Tuple, _ py.StringDict) (py.Object, error) {
+	seen := make(map[string]bool)
+	var names []string
+
+	addDict := func(d py.StringDict) {
+		for k := range d {
+			if !seen[k] {
+				seen[k] = true
+				names = append(names, k)
+			}
+		}
+	}
+
+	walkType := func(t *py.Type) {
+		for t != nil {
+			addDict(t.Dict)
+			t = t.Base
+		}
+	}
+
+	if len(args) == 0 {
+		// dir() with no args: return empty list (locals not accessible here)
+		return py.NewListFromItems(nil), nil
+	}
+
+	switch v := args[0].(type) {
+	case *py.Type:
+		walkType(v)
+	case *py.Module:
+		addDict(v.Globals)
+	default:
+		walkType(args[0].Type())
+	}
+
+	sort.Strings(names)
+	items := make([]py.Object, len(names))
+	for i, n := range names {
+		items[i] = py.String(n)
+	}
+	return py.NewListFromItems(items), nil
+}
+
+// builtinCallable implements callable(object) -> bool.
+func builtinCallable(_ py.Object, args py.Tuple, _ py.StringDict) (py.Object, error) {
+	if len(args) != 1 {
+		return nil, py.ExceptionNewf(py.TypeError, "callable() takes exactly one argument (%d given)", len(args))
+	}
+	if _, ok := args[0].(py.I__call__); ok {
+		return py.True, nil
+	}
+	return py.False, nil
+}
+
 // newSandbox wraps dangerous primitives in the given py.Context and registers the sandbox.
 func newSandbox(ctx py.Context) (*Sandbox, error) {
 	sb := &Sandbox{
@@ -166,8 +258,16 @@ func newSandbox(ctx py.Context) (*Sandbox, error) {
 		envPassThrough: false,
 	}
 
-	// 1. Wrap builtins.open
+	// 1. Inject dir() and callable(), then wrap builtins.open
 	builtinsMod := ctx.Store().Builtins
+	dirMethod := py.MustNewMethod("dir", builtinDir, 0, "dir([object]) -> list of names")
+	dirMethod.Module = builtinsMod
+	builtinsMod.Globals["dir"] = dirMethod
+
+	callableMethod := py.MustNewMethod("callable", builtinCallable, 0, "callable(object) -> bool")
+	callableMethod.Module = builtinsMod
+	builtinsMod.Globals["callable"] = callableMethod
+
 	if origOpen, ok := builtinsMod.Globals["open"].(*py.Method); ok {
 		wrappedOpen := py.MustNewMethod("open", func(self py.Object, args py.Tuple, kwargs py.StringDict) (py.Object, error) {
 			if !sb.FileReadEnabled() {
@@ -511,7 +611,7 @@ type walkIterator struct {
 	idx   int
 }
 
-func (w *walkIterator) Type() *py.Type { return walkIteratorType }
+func (w *walkIterator) Type() *py.Type              { return walkIteratorType }
 func (w *walkIterator) M__iter__() (py.Object, error) { return w, nil }
 func (w *walkIterator) M__next__() (py.Object, error) {
 	if w.idx >= len(w.items) {
@@ -605,4 +705,3 @@ func makeWalkMethod(sb *Sandbox, osMod *py.Module) *py.Method {
 	m.Module = osMod
 	return m
 }
-

@@ -1,7 +1,7 @@
 // Package remod registers the built-in "re" Python module backed by Go's regexp.
 // Import it with _ to trigger registration:
 //
-//	import _ "shipyard/pkg/shipyard/modules/re"
+//	import _ "shipyard/pkg/shipfile/modules/re"
 package remod
 
 import (

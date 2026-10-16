@@ -86,8 +86,10 @@ func runFn(self py.Object, args py.Tuple, kwargs py.StringDict) (py.Object, erro
 	}
 
 	var argv []string
+	var displayCmd string
 	switch v := args[0].(type) {
 	case py.String:
+		displayCmd = string(v)
 		argv = []string{"/bin/sh", "-c", string(v)}
 	case py.Tuple:
 		for _, item := range v {
@@ -97,6 +99,7 @@ func runFn(self py.Object, args py.Tuple, kwargs py.StringDict) (py.Object, erro
 			}
 			argv = append(argv, string(s))
 		}
+		displayCmd = strings.Join(argv, " ")
 	case *py.List:
 		for _, item := range v.Items {
 			s, ok := item.(py.String)
@@ -105,6 +108,7 @@ func runFn(self py.Object, args py.Tuple, kwargs py.StringDict) (py.Object, erro
 			}
 			argv = append(argv, string(s))
 		}
+		displayCmd = strings.Join(argv, " ")
 	default:
 		return nil, py.ExceptionNewf(py.TypeError, "Run() cmd must be a string, list, or tuple")
 	}
@@ -138,6 +142,14 @@ func runFn(self py.Object, args py.Tuple, kwargs py.StringDict) (py.Object, erro
 		quiet = true
 	}
 	if !quiet {
+		fmt.Printf("$ %s\n", displayCmd)
+		if stdinStr != "" {
+			if strings.HasSuffix(stdinStr, "\n") {
+				fmt.Print(stdinStr)
+			} else {
+				fmt.Println(stdinStr)
+			}
+		}
 		cmd.Stdout = io.MultiWriter(&stdout, os.Stdout)
 		cmd.Stderr = io.MultiWriter(&stderr, os.Stderr)
 	} else {

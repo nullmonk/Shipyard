@@ -1,4 +1,4 @@
-package shipyard
+package shipfile
 
 import "fmt"
 
@@ -22,18 +22,6 @@ type Dependency struct {
 	// One of: "=", "==", "!=", "<", "<=", ">", ">=".
 	// Ignored when Version is empty.
 	Op string
-}
-
-// Dep is a convenience constructor for a distro-agnostic dependency
-// (same package name everywhere).
-//   shipyard.Dep("openssl", ">=", "1.1.0")
-//   shipyard.Dep("git", "", "")          // any version
-func Dep(name, op, version string) Dependency {
-	return Dependency{
-		Names:   map[string]string{"": name},
-		Op:      op,
-		Version: Version(version),
-	}
 }
 
 // NameFor returns the package name to use for the given distro ID.

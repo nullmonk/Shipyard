@@ -32,11 +32,42 @@ class Version:
     def __hash__(self): return hash(self._s)
 
 
+class Dependency:
+    def __init__(self, names, op="", version=""):
+        if isinstance(names, str):
+            self.names = {"": names}
+        elif isinstance(names, dict):
+            self.names = {}
+            for k in names:
+                self.names[k] = names[k]
+        else:
+            self.names = {"": str(names)}
+        self.op = op
+        self.version = str(version) if version else ""
+
+    def __repr__(self):
+        name = self.names.get("", "")
+        if not name:
+            for v in self.names.values():
+                name = v
+                break
+        if self.version:
+            return "Dependency({!r}, {!r}, {!r})".format(name, self.op, self.version)
+        return "Dependency({!r})".format(name)
+
+
+
+def Dep(name, op="", version=""):
+    return Dependency(name, op, version)
+
+
+
 class Context:
-    def __init__(self, version="", distro=None, nproc=1, artifacts_dir=None, env=None):
+    def __init__(self, version="", distro=None, nproc=1, artifacts_dir=None, env=None, variables=None):
         self.version = version if isinstance(version, Version) else Version(version)
         self.distro = distro if distro is not None else Distro()
         self.nproc = nproc
+        self.variables = variables if variables is not None else {}
 
 
 class CodeFile:
@@ -112,6 +143,35 @@ class CodeFile:
         self._save()
 
 
+class Script:
+    def __init__(self, contents, interp=""):
+        import shipyard
+
+        interp_cmd = interp
+        if not interp_cmd:
+            first_line = contents.split('\n', 1)[0].rstrip('\r')
+            if first_line.startswith('#!'):
+                interp_cmd = first_line[2:].strip()
+
+        if not interp_cmd:
+            raise ValueError(
+                "Script() requires an interpreter: provide interp= or start contents with a shebang (#!)"
+            )
+
+        result = shipyard.Run(interp_cmd.split(), stdin=contents)
+        self.stdout = result.stdout
+        self.stderr = result.stderr
+        self.returncode = result.returncode
+
+    def __bool__(self):
+        return self.returncode == 0
+
+    def __repr__(self):
+        return "Script(returncode={}, stdout={!r}, stderr={!r})".format(
+            self.returncode, self.stdout, self.stderr
+        )
+
+
 def _is_valid_source_url(raw_url):
     if not raw_url or not isinstance(raw_url, str):
         return False
@@ -166,6 +226,9 @@ class Shipfile:
     Repository = ""
     BaseImage = ""
     Patches = "patches/"
+    Requires = []
+    Dependencies = []
+    Variables = []
 
     @staticmethod
     def tag_to_version(tag):
@@ -184,6 +247,10 @@ class Shipfile:
 
     def repository(self, ctx=None):
         return self.Repository
+
+    def get_variables(self=None):
+        import shipyard
+        return shipyard.get_variables(self if self is not None else Shipfile)
 
     def validate(self):
         pkg = getattr(self, "PackageName", "") or getattr(self, "Package", "")
@@ -219,20 +286,8 @@ class Shipfile:
                         "invalid Url in Urls '{}': must be a git repo or archive (.tar.gz, .tgz, .zip)".format(u)
                     )
 
-        # Validate variables
-        cls = self if isinstance(self, type) else type(self)
-        inst = self if not isinstance(self, type) else None
-        for name in dir(cls):
-            val = getattr(cls, name, None)
-            if getattr(val, "__is_variable__", False):
-                res = val(inst) if callable(val) else val
-                if not isinstance(res, str):
-                    raise TypeError("Variable '{}' must be a string".format(name))
-                v_fn = getattr(val, "__variable_validate__", None)
-                if callable(v_fn):
-                    err = v_fn(res)
-                    if err:
-                        raise ValueError("Variable '{}' validation failed: {}".format(name, err))
+        import shipyard
+        shipyard.get_variables(self)
 
 
 class Patcher(Shipfile):

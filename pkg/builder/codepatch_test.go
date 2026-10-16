@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"shipyard/pkg/builder"
+	"shipyard/pkg/shipfile"
 )
 
 func TestOpenSSHCodePatchApplication(t *testing.T) {
@@ -50,7 +51,33 @@ void fill_default_options(ServerOptions *options) {
 		t.Fatalf("PullSource failed: %v", err)
 	}
 
-	// 2. Snapshot pristine source in container
+	// 2. Apply code patches locally via the Go shipfile interpreter
+	shipyardRoot, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	shipfileDir := filepath.Join(shipyardRoot, "examples/openssh")
+
+	interp, err := shipfile.New(shipyardRoot)
+	if err != nil {
+		t.Fatalf("shipyard.New failed: %v", err)
+	}
+	defer interp.Close()
+
+	sf, err := shipfile.Load(filepath.Join(shipfileDir, "shipfile.py"), interp)
+	if err != nil {
+		t.Fatalf("shipfile.Load failed: %v", err)
+	}
+	if _, err := sf.RunCodePatches(tmpDir, "9.9p1"); err != nil {
+		t.Fatalf("RunCodePatches failed: %v", err)
+	}
+
+	// 3. Load patched source into Dagger and generate patch diff
+	patchedDir, err := builder.PullSource(ctx, client, builder.SourceConfig{LocalDir: tmpDir})
+	if err != nil {
+		t.Fatalf("PullSource (patched) failed: %v", err)
+	}
+
 	ctr := client.Container().
 		From("alpine:latest").
 		WithExec([]string{"apk", "add", "--no-cache", "git"}).
@@ -58,25 +85,6 @@ void fill_default_options(ServerOptions *options) {
 		WithWorkdir("/work/openssh-9.9p1")
 
 	ctr = builder.SnapshotSource(ctr, "/work/openssh-9.9p1")
-
-	// 3. Run the OpenSSH shipfile against the source in a Python container layer
-	shipyardRoot, err := filepath.Abs("../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	shipfileDir := filepath.Join(shipyardRoot, "examples/openssh")
-
-	patchedDir, err := builder.RunShipfile(ctx, client, ctr.Directory("/work/openssh-9.9p1"), builder.RunShipfileOpts{
-		ShipfileDir:    shipfileDir,
-		ShipyardPkgDir: shipyardRoot,
-		SourceName:     "openssh-9.9p1",
-		Version:        "9.9p1",
-	})
-	if err != nil {
-		t.Fatalf("RunShipfile failed: %v", err)
-	}
-
-	// 4. Put patched source back into container and generate patch diff
 	ctr = ctr.WithDirectory("/work/openssh-9.9p1", patchedDir)
 	patchContent, err := builder.GeneratePatch(ctx, ctr, "/work/openssh-9.9p1")
 	if err != nil {

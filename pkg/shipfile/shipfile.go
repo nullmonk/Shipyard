@@ -4,32 +4,33 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 
+	shipmod "shipyard/pkg/shipfile/modules/shipyard"
+
 	"github.com/go-python/gpython/py"
-	"shipyard/pkg/shipyard"
 )
 
 // Shipfile represents the parsed configuration of a shipfile.py.
 type Shipfile struct {
-	Path            string
-	Dir             string
-	Name            string
-	Url             string
-	Urls            []string
-	Branch          string
-	VersionTags     string
-	IgnoredVersions []string
-	PackageName     string
-	Repository      string
-	BaseImage       string
-	Setup           string
-	Build           string
-	Artifacts       string
-	ArtifactDir     string
-	Variables            map[string]string
-	VariableDescriptions map[string]string
-	Patches              string
+	Path              string
+	Dir               string
+	Name              string
+	Url               string
+	Urls              []string
+	Branch            string
+	VersionTags       string
+	IgnoredVersions   []string
+	PackageName       string
+	Repository        string
+	BaseImage         string
+	Artifacts         string
+	ArtifactDir       string
+	Variables         []shipmod.Variable
+	Dependencies      []Dependency
+	Patches           string
 	HasCodePatches    bool
 	HasPatchFiles     bool
 	ImplementsPatcher bool
@@ -39,6 +40,10 @@ type Shipfile struct {
 	HasPostPatch      bool
 	HasSetup          bool
 	HasBuild          bool
+
+	sfClass py.Object
+	sfInst  py.Object
+	interp  *Interpreter
 }
 
 // IsBuild returns true if this shipfile implements the Builder subclass.
@@ -55,6 +60,389 @@ func (s *Shipfile) IsPatch() bool {
 // rather than using a distro package manager.
 func (s *Shipfile) IsGeneric() bool {
 	return s.IsBuild()
+}
+
+// ValidateVariable runs the custom validator for a variable if defined.
+func (s *Shipfile) ValidateVariable(name, value string) error {
+	for i := range s.Variables {
+		if s.Variables[i].Name == name {
+			if err := s.Variables[i].Validate(value); err != nil {
+				return fmt.Errorf("variable %q validation failed: %w", name, err)
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("unknown variable %q", name)
+}
+
+// VariablesMap returns a validated map[string]string of all variables, applying any overrides.
+func (s *Shipfile) VariablesMap(overrides ...map[string]string) (map[string]string, error) {
+	out := make(map[string]string, len(s.Variables))
+	byName := make(map[string]*shipmod.Variable, len(s.Variables))
+	for i := range s.Variables {
+		v := &s.Variables[i]
+		if err := v.Validate(v.Value); err != nil {
+			return nil, err
+		}
+		out[v.Name] = v.Value
+		byName[v.Name] = v
+	}
+	for _, ov := range overrides {
+		for k, val := range ov {
+			v, exists := byName[k]
+			if !exists {
+				return nil, fmt.Errorf("unknown variable %q", k)
+			}
+			if err := v.Validate(val); err != nil {
+				return nil, err
+			}
+			out[k] = val
+		}
+	}
+	return out, nil
+}
+
+// NewContext creates a Python shipyard.Context object with version and ctx.variables dict populated.
+func (s *Shipfile) NewContext(version string, overrides ...map[string]string) (py.Object, error) {
+	if s.interp == nil {
+		return nil, fmt.Errorf("shipfile interpreter is not initialized")
+	}
+	varsMap, err := s.VariablesMap(overrides...)
+	if err != nil {
+		return nil, err
+	}
+	varsDict := py.NewStringDict()
+	for k, v := range varsMap {
+		varsDict[k] = py.String(v)
+	}
+
+	ctxCls, err := s.interp.GetShipyardAttr("Context")
+	if err != nil {
+		return nil, fmt.Errorf("get shipyard.Context: %w", err)
+	}
+	kwargs := py.StringDict{
+		"version":   py.String(version),
+		"variables": varsDict,
+	}
+	return py.Call(ctxCls, py.Tuple{}, kwargs)
+}
+
+// CallMethod creates a Context with ctx.variables populated and invokes methodName on inst.
+// Methods are retrieved from the class dict (unbound) to avoid gpython's bound-method
+// ambiguity, then called with explicit self + optional ctx variants.
+func (s *Shipfile) CallMethod(inst py.Object, methodName string, overrides ...map[string]string) error {
+	if inst == nil {
+		inst = s.sfInst
+	}
+	ctxObj, err := s.NewContext("", overrides...)
+	if err != nil {
+		return err
+	}
+
+	// Retrieve the unbound function from the class dict, searching MRO bases.
+	fn, found := findMethodInType(inst, methodName)
+	if !found {
+		// Fall back to instance attribute lookup (e.g. dynamically added methods).
+		fn, err = py.GetAttrString(inst, methodName)
+		if err != nil {
+			return fmt.Errorf("no method %s found on Shipfile instance: %w", methodName, err)
+		}
+	}
+
+	// Try all four calling conventions (unbound: self + ctx, self; bound: ctx, none).
+	variants := []py.Tuple{
+		{inst, ctxObj}, // def method(self, ctx):
+		{inst},         // def method(self):
+		{ctxObj},       // bound method with ctx
+		{},             // bound method, no ctx
+	}
+	var lastErr error
+	for _, args := range variants {
+		if _, callErr := py.Call(fn, args, nil); callErr == nil {
+			return nil
+		} else {
+			lastErr = callErr
+		}
+	}
+	py.TracebackDump(lastErr)
+	return fmt.Errorf("%s() failed: %v", methodName, lastErr)
+}
+
+// findMethodInType walks the type's MRO to find an unbound function by name.
+func findMethodInType(obj py.Object, name string) (py.Object, bool) {
+	typ := obj.Type()
+	for _, base := range typ.Mro {
+		b, ok := base.(*py.Type)
+		if !ok {
+			continue
+		}
+		if val, exists := b.Dict[name]; exists {
+			return unwrapCallable(val), true
+		}
+	}
+	return nil, false
+}
+
+// RunCodePatches executes the Shipfile's pre_patch, @CodePatch functions, and post_patch
+// against sourceDir in gpython with variables set as a dict on the ctx object.
+func (s *Shipfile) RunCodePatches(sourceDir, version string, overrides ...map[string]string) ([]string, error) {
+	if s.interp == nil {
+		return nil, fmt.Errorf("shipfile interpreter is not initialized")
+	}
+	inst := s.sfInst
+	if inst == nil && s.sfClass != nil {
+		var err error
+		inst, err = py.Call(s.sfClass, nil, nil)
+		if err != nil {
+			return nil, fmt.Errorf("instantiate Shipfile: %w", err)
+		}
+		s.sfInst = inst
+	}
+
+	ctxObj, err := s.NewContext(version, overrides...)
+	if err != nil {
+		return nil, err
+	}
+
+	sb := s.interp.Sandbox()
+	prevFileRead := sb.FileReadEnabled()
+	sb.SetFileRead(true)
+	defer sb.SetFileRead(prevFileRead)
+
+	if s.HasPrePatch && inst != nil {
+		if meth, err := py.GetAttrString(inst, "pre_patch"); err == nil {
+			if _, err := py.Call(meth, py.Tuple{ctxObj}, nil); err != nil {
+				if _, err2 := py.Call(meth, py.Tuple{}, nil); err2 != nil {
+					return nil, fmt.Errorf("pre_patch failed: %w", err)
+				}
+			}
+		}
+	}
+
+	type cpEntry struct {
+		name     string
+		fn       py.Object
+		patterns []*regexp.Regexp
+		versions []string
+		required bool
+		hasRun   bool
+	}
+
+	var patches []*cpEntry
+	if typ, ok := s.sfClass.(*py.Type); ok {
+		collectFromDict := func(dict py.StringDict) {
+			for key, val := range dict {
+				fn := unwrapCallable(val)
+				filesObj, err := py.GetAttrString(fn, "__patch_files")
+				if err != nil {
+					continue
+				}
+				var patterns []*regexp.Regexp
+				if t, ok := filesObj.(py.Tuple); ok {
+					for _, item := range t {
+						if ps, ok := item.(py.String); ok {
+							re, err := regexp.Compile("^(?:" + string(ps) + ")$")
+							if err != nil {
+								re, _ = regexp.Compile(string(ps))
+							}
+							if re != nil {
+								patterns = append(patterns, re)
+							}
+						}
+					}
+				} else if l, ok := filesObj.(*py.List); ok {
+					for _, item := range l.Items {
+						if ps, ok := item.(py.String); ok {
+							re, err := regexp.Compile("^(?:" + string(ps) + ")$")
+							if err != nil {
+								re, _ = regexp.Compile(string(ps))
+							}
+							if re != nil {
+								patterns = append(patterns, re)
+							}
+						}
+					}
+				}
+				if len(patterns) == 0 {
+					continue
+				}
+				req := true
+				if reqObj, err := py.GetAttrString(fn, "__patch_required"); err == nil {
+					req = reqObj == py.True
+				}
+				var vers []string
+				if vObj, err := py.GetAttrString(fn, "__patch_versions"); err == nil {
+					if vt, ok := vObj.(py.Tuple); ok {
+						for _, item := range vt {
+							if vs, ok := item.(py.String); ok {
+								vers = append(vers, string(vs))
+							}
+						}
+					} else if vl, ok := vObj.(*py.List); ok {
+						for _, item := range vl.Items {
+							if vs, ok := item.(py.String); ok {
+								vers = append(vers, string(vs))
+							}
+						}
+					}
+				}
+				patches = append(patches, &cpEntry{
+					name:     key,
+					fn:       fn,
+					patterns: patterns,
+					versions: vers,
+					required: req,
+				})
+			}
+		}
+		collectFromDict(typ.Dict)
+		for _, base := range typ.Mro {
+			b, ok := base.(*py.Type)
+			if !ok || b == typ || isTargetClass(b, "Patcher") || isTargetClass(b, "Builder") || isTargetClass(b, "Shipfile") || b.Name == "object" {
+				continue
+			}
+			collectFromDict(b.Dict)
+		}
+	}
+
+	codeFileCls, _ := s.interp.GetShipyardAttr("CodeFile")
+
+	appliedMap := make(map[string]bool)
+	err = filepath.Walk(sourceDir, func(fullPath string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if info.IsDir() {
+			if info.Name() == ".git" || info.Name() == ".pc" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return nil
+		}
+		relPath, err := filepath.Rel(sourceDir, fullPath)
+		if err != nil {
+			return err
+		}
+		relPath = filepath.ToSlash(relPath)
+
+		for _, cp := range patches {
+			matched := false
+			for _, re := range cp.patterns {
+				if re.MatchString(relPath) || re.MatchString(strings.TrimPrefix(relPath, "/")) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+			if len(cp.versions) > 0 && version != "" {
+				verMatch := false
+				for _, v := range cp.versions {
+					if v == version {
+						verMatch = true
+						break
+					}
+				}
+				if !verMatch {
+					cp.hasRun = true
+					continue
+				}
+			}
+
+			cp.hasRun = true
+
+			cfObj, err := py.Call(codeFileCls, py.Tuple{py.String(fullPath)}, nil)
+			if err != nil {
+				return fmt.Errorf("init CodeFile(%s): %w", relPath, err)
+			}
+
+			// Try calling with (cf, ctx), then (inst, cf, ctx), then (cf), then (inst, cf)
+			var callErr error
+			if _, callErr = py.Call(cp.fn, py.Tuple{cfObj, ctxObj}, nil); callErr != nil {
+				if _, callErr = py.Call(cp.fn, py.Tuple{inst, cfObj, ctxObj}, nil); callErr != nil {
+					if _, callErr = py.Call(cp.fn, py.Tuple{cfObj}, nil); callErr != nil {
+						_, callErr = py.Call(cp.fn, py.Tuple{inst, cfObj}, nil)
+					}
+				}
+			}
+			if callErr != nil {
+				return fmt.Errorf("code patch %s failed on %s: %w", cp.name, relPath, callErr)
+			}
+			appliedMap[cp.name] = true
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	for _, cp := range patches {
+		if cp.required && !cp.hasRun {
+			return nil, fmt.Errorf("code patch %q did not run and is required", cp.name)
+		}
+	}
+
+	if s.HasPostPatch && inst != nil {
+		if meth, err := py.GetAttrString(inst, "post_patch"); err == nil {
+			if _, err := py.Call(meth, py.Tuple{ctxObj}, nil); err != nil {
+				if _, err2 := py.Call(meth, py.Tuple{}, nil); err2 != nil {
+					return nil, fmt.Errorf("post_patch failed: %w", err)
+				}
+			}
+		}
+	}
+
+	var applied []string
+	for k := range appliedMap {
+		applied = append(applied, k)
+	}
+	sort.Strings(applied)
+	return applied, nil
+}
+
+// VariableDef represents a variable definition.
+type VariableDef struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Value       string `json:"value"`
+}
+
+// GetVariables returns the list of variables with Name, Description, and Value.
+func (s *Shipfile) GetVariables() []VariableDef {
+	out := make([]VariableDef, 0, len(s.Variables))
+	for _, v := range s.Variables {
+		desc := v.Description
+		if desc == "" {
+			desc = v.Name
+		}
+		out = append(out, VariableDef{
+			Name:        v.Name,
+			Description: desc,
+			Value:       v.Value,
+		})
+	}
+	return out
+}
+
+// GetVariable returns a specific variable by name.
+func (s *Shipfile) GetVariable(name string) (VariableDef, bool) {
+	for _, v := range s.Variables {
+		if v.Name == name {
+			desc := v.Description
+			if desc == "" {
+				desc = v.Name
+			}
+			return VariableDef{
+				Name:        v.Name,
+				Description: desc,
+				Value:       v.Value,
+			}, true
+		}
+	}
+	return VariableDef{}, false
 }
 
 // Find looks for a shipfile.py starting at dir and checking common candidate locations.
@@ -83,7 +471,7 @@ func Find(dir string) (string, error) {
 }
 
 // Load reads and parses a shipfile.py using the provided gpython interpreter.
-func Load(path string, interp *shipyard.Interpreter) (*Shipfile, error) {
+func Load(path string, interp *Interpreter) (*Shipfile, error) {
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err
@@ -95,14 +483,52 @@ func Load(path string, interp *shipyard.Interpreter) (*Shipfile, error) {
 		return nil, fmt.Errorf("run shipfile %s: %w", absPath, err)
 	}
 
+	return loadModule(mod, absPath, interp)
+}
+
+// LoadString parses a shipfile from string content using the provided interpreter.
+func LoadString(content string, interp *Interpreter) (*Shipfile, error) {
+	code, err := py.Compile(content+"\n", "shipfile.py", py.ExecMode, 0, true)
+	if err != nil {
+		return nil, fmt.Errorf("compile shipfile: %w", err)
+	}
+	mod, err := py.RunCode(interp.Context(), code, "shipfile.py", nil)
+	if err != nil {
+		py.TracebackDump(err)
+		return nil, fmt.Errorf("run shipfile: %w", err)
+	}
+	return loadModule(mod, "", interp)
+}
+
+// ValidateString parses and validates a shipfile from string content.
+func ValidateString(content string, interp *Interpreter) (*Shipfile, error) {
+	sf, err := LoadString(content, interp)
+	if err != nil {
+		return nil, err
+	}
+	if err := sf.Validate(); err != nil {
+		return sf, err
+	}
+	return sf, nil
+}
+
+func loadModule(mod *py.Module, absPath string, interp *Interpreter) (*Shipfile, error) {
 	sfClass, ok := mod.Globals["Shipfile"]
 	if !ok {
-		return nil, fmt.Errorf("no Shipfile class found in %s", absPath)
+		if absPath != "" {
+			return nil, fmt.Errorf("no Shipfile class found in %s", absPath)
+		}
+		return nil, fmt.Errorf("no Shipfile class found in shipfile content")
+	}
+
+	dir := "."
+	if absPath != "" {
+		dir = filepath.Dir(absPath)
 	}
 
 	sf := &Shipfile{
 		Path:        absPath,
-		Dir:         filepath.Dir(absPath),
+		Dir:         dir,
 		Name:        getAttrString(sfClass, "Name"),
 		Url:         firstNonEmpty(getAttrString(sfClass, "Url"), getAttrString(sfClass, "URL"), getAttrString(sfClass, "url")),
 		Urls:        firstNonEmptySlice(getAttrStringSlice(sfClass, "Urls"), getAttrStringSlice(sfClass, "URLs"), getAttrStringSlice(sfClass, "URLS"), getAttrStringSlice(sfClass, "urls")),
@@ -111,13 +537,11 @@ func Load(path string, interp *shipyard.Interpreter) (*Shipfile, error) {
 		PackageName: firstNonEmpty(getAttrString(sfClass, "PackageName"), getAttrString(sfClass, "Package"), getAttrString(sfClass, "package_name")),
 		Repository:  getAttrString(sfClass, "Repository"),
 		BaseImage:   getAttrString(sfClass, "BaseImage"),
-		Setup:       getAttrString(sfClass, "Setup"),
-		Build:       getAttrString(sfClass, "Build"),
-		Artifacts:            getAttrString(sfClass, "Artifacts"),
-		ArtifactDir:          getAttrString(sfClass, "ArtifactDir"),
-		Patches:              getAttrString(sfClass, "Patches"),
-		Variables:            make(map[string]string),
-		VariableDescriptions: make(map[string]string),
+		Artifacts:   getAttrString(sfClass, "Artifacts"),
+		ArtifactDir: getAttrString(sfClass, "ArtifactDir"),
+		Patches:     getAttrString(sfClass, "Patches"),
+		sfClass:     sfClass,
+		interp:      interp,
 	}
 
 	if sf.Patches == "" {
@@ -127,64 +551,20 @@ func Load(path string, interp *shipyard.Interpreter) (*Shipfile, error) {
 		sf.VersionTags = "*"
 	}
 
+	// Extract and validate Variables list on Shipfile class
+	vars, err := shipmod.ExtractVariables(sfClass)
+	if err != nil {
+		return nil, fmt.Errorf("shipfile variables error: %w", err)
+	}
+	for _, v := range vars {
+		sf.Variables = append(sf.Variables, *v)
+	}
+
 	inst, _ := py.Call(sfClass, nil, nil)
+	sf.sfInst = inst
+
 	if typ, ok := sfClass.(*py.Type); ok {
 		checkDict := func(dict py.StringDict) {
-			for key, val := range dict {
-				if _, ok := sf.Variables[key]; ok {
-					continue
-				}
-				isVar := false
-				if _, err := py.GetAttrString(val, "__is_variable__"); err == nil {
-					isVar = true
-				}
-				if !isVar {
-					if t := val.Type(); t != nil && t.Name == "Variable" {
-						isVar = true
-					}
-				}
-				if isVar {
-					desc := ""
-					if d, err := py.GetAttrString(val, "__variable_description__"); err == nil {
-						if s, ok := d.(py.String); ok {
-							desc = string(s)
-						}
-					}
-					if desc == "" {
-						if d, err := py.GetAttrString(val, "description"); err == nil {
-							if s, ok := d.(py.String); ok {
-								desc = string(s)
-							}
-						}
-					}
-
-					var valStr string
-					if getValFn, err := py.GetAttrString(val, "get_value"); err == nil {
-						var res py.Object
-						var err error
-						if inst != nil {
-							res, err = py.Call(getValFn, py.Tuple{inst}, nil)
-						} else {
-							res, err = py.Call(getValFn, py.Tuple{}, nil)
-						}
-						if err == nil {
-							if s, ok := res.(py.String); ok {
-								valStr = string(s)
-							}
-						}
-					} else if inst != nil {
-						if attr, err := py.GetAttrString(inst, key); err == nil {
-							if s, ok := attr.(py.String); ok {
-								valStr = string(s)
-							}
-						}
-					}
-
-					sf.Variables[key] = valStr
-					sf.VariableDescriptions[key] = desc
-				}
-			}
-
 			if !sf.HasCodePatches {
 				for _, val := range dict {
 					fn := unwrapCallable(val)
@@ -224,21 +604,51 @@ func Load(path string, interp *shipyard.Interpreter) (*Shipfile, error) {
 		}
 	}
 
+	// Extract dependencies from Requires or Dependencies attribute
+	var depObj py.Object
+	if v, err := py.GetAttrString(sfClass, "Requires"); err == nil && v != nil && v != py.None {
+		depObj = v
+	} else if v, err := py.GetAttrString(sfClass, "Dependencies"); err == nil && v != nil && v != py.None {
+		depObj = v
+	} else if inst != nil {
+		if v, err := py.GetAttrString(inst, "Requires"); err == nil && v != nil && v != py.None {
+			depObj = v
+		} else if v, err := py.GetAttrString(inst, "Dependencies"); err == nil && v != nil && v != py.None {
+			depObj = v
+		}
+	}
+	if depObj == nil || depObj == py.None {
+		if v, ok := mod.Globals["Requires"]; ok && v != nil && v != py.None {
+			depObj = v
+		} else if v, ok := mod.Globals["Dependencies"]; ok && v != nil && v != py.None {
+			depObj = v
+		}
+	}
+	if depObj != nil && depObj != py.None {
+		sf.Dependencies = parseDependencies(depObj)
+	}
+
 	if sf.PackageName != "" {
 		sf.HasPackageName = true
 	}
 
 	// If sf.PackageName is empty but package_name method exists, try invoking it on an instance
 	if sf.PackageName == "" && sf.HasPackageName {
-		if inst, err := py.Call(sfClass, nil, nil); err == nil {
+		if inst != nil {
+			ctxObj, _ := sf.NewContext("")
 			if meth, err := py.GetAttrString(inst, "package_name"); err == nil {
-				if res, err := py.Call(meth, nil, nil); err == nil {
-					if s, ok := res.(py.String); ok && string(s) != "" {
-						sf.PackageName = string(s)
+				if ctxObj != nil {
+					if res, err := py.Call(meth, py.Tuple{ctxObj}, nil); err == nil {
+						if s, ok := res.(py.String); ok && string(s) != "" {
+							sf.PackageName = string(s)
+						}
 					}
-				} else if res, err := py.Call(meth, py.Tuple{py.None}, nil); err == nil {
-					if s, ok := res.(py.String); ok && string(s) != "" {
-						sf.PackageName = string(s)
+				}
+				if sf.PackageName == "" {
+					if res, err := py.Call(meth, nil, nil); err == nil {
+						if s, ok := res.(py.String); ok && string(s) != "" {
+							sf.PackageName = string(s)
+						}
 					}
 				}
 			}
@@ -246,15 +656,17 @@ func Load(path string, interp *shipyard.Interpreter) (*Shipfile, error) {
 	}
 
 	// Detect raw patch files in the patches directory
-	patchesPath := sf.Patches
-	if !filepath.IsAbs(patchesPath) {
-		patchesPath = filepath.Join(sf.Dir, patchesPath)
-	}
-	if entries, err := os.ReadDir(patchesPath); err == nil {
-		for _, e := range entries {
-			if !e.IsDir() && (strings.HasSuffix(e.Name(), ".patch") || strings.HasSuffix(e.Name(), ".diff")) {
-				sf.HasPatchFiles = true
-				break
+	if sf.Dir != "" && sf.Patches != "" {
+		patchesPath := sf.Patches
+		if !filepath.IsAbs(patchesPath) {
+			patchesPath = filepath.Join(sf.Dir, patchesPath)
+		}
+		if entries, err := os.ReadDir(patchesPath); err == nil {
+			for _, e := range entries {
+				if !e.IsDir() && (strings.HasSuffix(e.Name(), ".patch") || strings.HasSuffix(e.Name(), ".diff")) {
+					sf.HasPatchFiles = true
+					break
+				}
 			}
 		}
 	}
@@ -263,16 +675,100 @@ func Load(path string, interp *shipyard.Interpreter) (*Shipfile, error) {
 	sf.ImplementsPatcher = ImplementsSubclass(sfClass, "Patcher")
 	sf.ImplementsBuilder = ImplementsSubclass(sfClass, "Builder")
 
-	if inst != nil {
-		if valMeth, err := py.GetAttrString(inst, "validate"); err == nil {
-			if _, err := py.Call(valMeth, nil, nil); err != nil {
-				py.TracebackDump(err)
-				return nil, fmt.Errorf("shipfile %s validation error: %v", absPath, err)
+	return sf, nil
+}
+
+func parseDependencies(obj py.Object) []Dependency {
+	if obj == nil || obj == py.None {
+		return nil
+	}
+	var out []Dependency
+
+	// 1. List or Tuple
+	var items []py.Object
+	if t, ok := obj.(py.Tuple); ok {
+		items = t
+	} else if l, ok := obj.(*py.List); ok {
+		items = l.Items
+	}
+
+	if items != nil {
+		for _, item := range items {
+			if s, ok := item.(py.String); ok {
+				out = append(out, parseStringDep(string(s)))
+			} else if item != nil {
+				dep := parseObjectDep(item)
+				if len(dep.Names) > 0 {
+					out = append(out, dep)
+				}
+			}
+		}
+		return out
+	}
+
+	// 2. Dict: {"curl": ">= 7.0", "bash": ""}
+	if sDict, err := py.DictCheck(obj); err == nil {
+		for k, v := range sDict {
+			verStr := ""
+			if s, ok := v.(py.String); ok {
+				verStr = string(s)
+			}
+			out = append(out, parseStringDep(strings.TrimSpace(k+" "+verStr)))
+		}
+		return out
+	}
+
+	return nil
+}
+
+func parseStringDep(s string) Dependency {
+	s = strings.TrimSpace(s)
+	ops := []string{">=", "<=", "!=", "==", "=", ">", "<"}
+	for _, op := range ops {
+		idx := strings.Index(s, op)
+		if idx != -1 {
+			name := strings.TrimSpace(s[:idx])
+			version := strings.TrimSpace(s[idx+len(op):])
+			return Dependency{
+				Names:   map[string]string{"": name},
+				Op:      op,
+				Version: Version(version),
 			}
 		}
 	}
+	return Dependency{
+		Names: map[string]string{"": s},
+	}
+}
 
-	return sf, nil
+func parseObjectDep(item py.Object) Dependency {
+	var namesMap map[string]string
+	if namesAttr, err := py.GetAttrString(item, "names"); err == nil && namesAttr != nil && namesAttr != py.None {
+		if sDict, err := py.DictCheck(namesAttr); err == nil {
+			namesMap = make(map[string]string, len(sDict))
+			for k, v := range sDict {
+				if s, ok := v.(py.String); ok {
+					namesMap[k] = string(s)
+				} else {
+					namesMap[k] = fmt.Sprint(v)
+				}
+			}
+		}
+	} else if nameAttr, err := py.GetAttrString(item, "name"); err == nil && nameAttr != nil && nameAttr != py.None {
+		if s, ok := nameAttr.(py.String); ok {
+			namesMap = map[string]string{"": string(s)}
+		}
+	}
+	op := getAttrString(item, "op")
+	version := getAttrString(item, "version")
+	if len(namesMap) == 0 {
+		return Dependency{}
+	}
+	return Dependency{
+		Names:   namesMap,
+		Op:      op,
+		Version: Version(version),
+	}
 }
 
 // LoadDefault creates an interpreter with default package root and parses the shipfile.
@@ -280,7 +776,7 @@ func LoadDefault(path string, pkgDir string) (*Shipfile, error) {
 	if pkgDir == "" {
 		pkgDir = "."
 	}
-	interp, err := shipyard.New(pkgDir)
+	interp, err := New(pkgDir)
 	if err != nil {
 		return nil, fmt.Errorf("init interpreter: %w", err)
 	}
@@ -362,7 +858,6 @@ func unwrapCallable(val py.Object) py.Object {
 	return val
 }
 
-
 func firstNonEmptySlice(slices ...[]string) []string {
 	for _, s := range slices {
 		if len(s) > 0 {
@@ -405,3 +900,55 @@ func isTargetClass(t *py.Type, target string) bool {
 	return false
 }
 
+// RunContext carries the inputs for a Patch or Build execution.
+type RunContext struct {
+	// SourceDir is the directory containing the source files to patch (required for Patch).
+	SourceDir string
+	// Version is the version string passed to CodePatch version gates and the Python Context.
+	Version string
+	// Variables overrides default variable values defined in the Shipfile.
+	Variables map[string]string
+}
+
+func (rc RunContext) overrides() []map[string]string {
+	if len(rc.Variables) > 0 {
+		return []map[string]string{rc.Variables}
+	}
+	return nil
+}
+
+// Patch applies the shipfile's pre_patch, @CodePatch functions, and post_patch
+// to the source tree at ctx.SourceDir. File read is temporarily enabled for
+// the duration of the call. Returns the names of applied CodePatch functions.
+func (s *Shipfile) Patch(ctx RunContext) ([]string, error) {
+	return s.RunCodePatches(ctx.SourceDir, ctx.Version, ctx.overrides()...)
+}
+
+// Build invokes the shipfile's setup() and build() methods (or Setup/Build
+// shell strings if no Python methods are defined). Both execution and file read
+// are enabled for the duration of the call and restored afterwards.
+func (s *Shipfile) Build(ctx RunContext) error {
+	if s.interp == nil {
+		return fmt.Errorf("shipfile interpreter is not initialized")
+	}
+	sb := s.interp.Sandbox()
+	sb.SetExecution(true)
+	sb.SetFileRead(true)
+	defer func() {
+		sb.SetExecution(false)
+		sb.SetFileRead(false)
+	}()
+
+	overrides := ctx.overrides()
+	if s.HasSetup {
+		if err := s.CallMethod(nil, "setup", overrides...); err != nil {
+			return fmt.Errorf("setup failed: %w", err)
+		}
+	}
+	if s.HasBuild {
+		if err := s.CallMethod(nil, "build", overrides...); err != nil {
+			return fmt.Errorf("build failed: %w", err)
+		}
+	}
+	return nil
+}

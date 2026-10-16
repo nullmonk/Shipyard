@@ -1,4 +1,4 @@
-package shipyard_test
+package shipfile_test
 
 import (
 	"os"
@@ -7,10 +7,10 @@ import (
 	"testing"
 
 	"github.com/go-python/gpython/py"
-	"shipyard/pkg/shipyard"
+	"shipyard/pkg/shipfile"
 )
 
-func newTestInterpreter(t *testing.T) *shipyard.Interpreter {
+func newTestInterpreter(t *testing.T) *shipfile.Interpreter {
 	t.Helper()
 	// Find shipyard repo root to locate python package
 	wd, err := os.Getwd()
@@ -18,9 +18,9 @@ func newTestInterpreter(t *testing.T) *shipyard.Interpreter {
 		t.Fatalf("getwd: %v", err)
 	}
 	repoRoot := filepath.Clean(filepath.Join(wd, "../.."))
-	interp, err := shipyard.New(repoRoot)
+	interp, err := shipfile.New(repoRoot)
 	if err != nil {
-		t.Fatalf("shipyard.New: %v", err)
+		t.Fatalf("shipfile.New: %v", err)
 	}
 	t.Cleanup(func() {
 		interp.Close()
@@ -28,7 +28,7 @@ func newTestInterpreter(t *testing.T) *shipyard.Interpreter {
 	return interp
 }
 
-func runPySrc(t *testing.T, interp *shipyard.Interpreter, src string) (*py.Module, error) {
+func runPySrc(t *testing.T, interp *shipfile.Interpreter, src string) (*py.Module, error) {
 	t.Helper()
 	code, err := py.Compile(src+"\n", "<test>", py.ExecMode, 0, true)
 	if err != nil {
@@ -41,7 +41,7 @@ func TestSandboxExecutionGating(t *testing.T) {
 	interp := newTestInterpreter(t)
 
 	// 1. By default, execution should be disabled
-	if interp.ExecutionEnabled() {
+	if interp.Sandbox().ExecutionEnabled() {
 		t.Fatalf("expected ExecutionEnabled to be false by default")
 	}
 
@@ -76,8 +76,8 @@ func TestSandboxExecutionGating(t *testing.T) {
 	}
 
 	// 2. Enable execution
-	interp.SetExecution(true)
-	if !interp.ExecutionEnabled() {
+	interp.Sandbox().SetExecution(true)
+	if !interp.Sandbox().ExecutionEnabled() {
 		t.Fatalf("expected ExecutionEnabled to be true")
 	}
 
@@ -98,8 +98,8 @@ func TestSandboxExecutionGating(t *testing.T) {
 	}
 
 	// 3. Disable execution again
-	interp.SetExecution(false)
-	if interp.ExecutionEnabled() {
+	interp.Sandbox().SetExecution(false)
+	if interp.Sandbox().ExecutionEnabled() {
 		t.Fatalf("expected ExecutionEnabled to be false")
 	}
 
@@ -127,7 +127,7 @@ func TestSandboxFileReadGating(t *testing.T) {
 	t.Cleanup(func() { os.Remove(tmpPath) })
 
 	// 1. By default, file read should be disabled
-	if interp.FileReadEnabled() {
+	if interp.Sandbox().FileReadEnabled() {
 		t.Fatalf("expected FileReadEnabled to be false by default")
 	}
 
@@ -171,8 +171,8 @@ func TestSandboxFileReadGating(t *testing.T) {
 	}
 
 	// 2. Enable file read
-	interp.SetFileRead(true)
-	if !interp.FileReadEnabled() {
+	interp.Sandbox().SetFileRead(true)
+	if !interp.Sandbox().FileReadEnabled() {
 		t.Fatalf("expected FileReadEnabled to be true")
 	}
 
@@ -213,8 +213,8 @@ func TestSandboxFileReadGating(t *testing.T) {
 	}
 
 	// 3. Disable file read again
-	interp.SetFileRead(false)
-	if interp.FileReadEnabled() {
+	interp.Sandbox().SetFileRead(false)
+	if interp.Sandbox().FileReadEnabled() {
 		t.Fatalf("expected FileReadEnabled to be false")
 	}
 
@@ -234,7 +234,7 @@ func TestSandboxEnvPassThroughGating(t *testing.T) {
 	})
 
 	// 1. By default, EnvPassThrough should be disabled
-	if interp.EnvPassThroughEnabled() {
+	if interp.Sandbox().EnvPassThroughEnabled() {
 		t.Fatalf("expected EnvPassThroughEnabled to be false by default")
 	}
 
@@ -272,8 +272,8 @@ func TestSandboxEnvPassThroughGating(t *testing.T) {
 	}
 
 	// 2. Enable EnvPassThrough
-	interp.SetEnvPassThrough(true)
-	if !interp.EnvPassThroughEnabled() {
+	interp.Sandbox().SetEnvPassThrough(true)
+	if !interp.Sandbox().EnvPassThroughEnabled() {
 		t.Fatalf("expected EnvPassThroughEnabled to be true")
 	}
 
@@ -289,8 +289,8 @@ func TestSandboxEnvPassThroughGating(t *testing.T) {
 	}
 
 	// 3. Disable EnvPassThrough again
-	interp.SetEnvPassThrough(false)
-	if interp.EnvPassThroughEnabled() {
+	interp.Sandbox().SetEnvPassThrough(false)
+	if interp.Sandbox().EnvPassThroughEnabled() {
 		t.Fatalf("expected EnvPassThroughEnabled to be false")
 	}
 
@@ -524,7 +524,7 @@ posix_j = posixpath.join("x", "y")
 	}
 
 	// When file read is enabled, they must succeed
-	interp.SetFileRead(true)
+	interp.Sandbox().SetFileRead(true)
 	checkSrc := `
 import os.path
 ex = os.path.exists('` + testFile + `')
@@ -575,7 +575,7 @@ func TestOSStatAndWalk(t *testing.T) {
 	}
 
 	// 2. Enable file read: os.stat and os.walk must succeed
-	interp.SetFileRead(true)
+	interp.Sandbox().SetFileRead(true)
 
 	statSrc := `
 import os
@@ -737,28 +737,31 @@ hnew_hex = hnew.hexdigest()
 	}
 }
 
-func TestVariableDecorator(t *testing.T) {
+func TestVariableObject(t *testing.T) {
 	interp := newTestInterpreter(t)
 
 	// 1. Valid string variable
 	validSrc := `
 from shipyard import Variable
 
-@Variable("A banner comment")
-def BANNER():
-    return "opensource is good"
+v = Variable("BANNER", "A banner comment", "opensource is good")
+name_ok = v.name == "BANNER"
+desc_ok = v.description == "A banner comment"
+val_ok = v.value == "opensource is good"
 `
-	if _, err := runPySrc(t, interp, validSrc); err != nil {
+	mod, err := runPySrc(t, interp, validSrc)
+	if err != nil {
 		t.Fatalf("expected valid variable to succeed, got: %v", err)
 	}
+	if mod.Globals["name_ok"] != py.True || mod.Globals["desc_ok"] != py.True || mod.Globals["val_ok"] != py.True {
+		t.Fatalf("unexpected variable attributes: %v", mod.Globals)
+	}
 
-	// 2. Variable with non-string return value must fail
+	// 2. Variable with non-string value must fail
 	nonStringSrc := `
 from shipyard import Variable
 
-@Variable("Number port")
-def PORT():
-    return 8080
+v = Variable("PORT", "Number port", 8080)
 `
 	if _, err := runPySrc(t, interp, nonStringSrc); err == nil {
 		t.Fatalf("expected variable with int value to fail, got nil")
@@ -773,9 +776,7 @@ def check_banner(val):
         return "too short"
     return None
 
-@Variable("Banner comment", validate=check_banner)
-def BANNER():
-    return "hello world"
+v = Variable("BANNER", "Banner comment", "hello world", validate=check_banner)
 `
 	if _, err := runPySrc(t, interp, validFnSrc); err != nil {
 		t.Fatalf("expected valid validator to succeed, got: %v", err)
@@ -790,9 +791,7 @@ def check_banner(val):
         return "too short, must be at least 10 chars"
     return None
 
-@Variable("Banner comment", validate=check_banner)
-def BANNER():
-    return "short"
+v = Variable("BANNER", "Banner comment", "short", validate=check_banner)
 `
 	if _, err := runPySrc(t, interp, invalidFnSrc); err == nil {
 		t.Fatalf("expected validator returning error string to fail, got nil")
@@ -802,15 +801,66 @@ def BANNER():
 	badDescSrc := `
 from shipyard import Variable
 
-@Variable(12345)
-def FOO():
-    return "bar"
+v = Variable("FOO", 12345, "bar")
 `
 	if _, err := runPySrc(t, interp, badDescSrc); err == nil {
 		t.Fatalf("expected non-string description to fail, got nil")
 	}
 }
 
+func TestShipfileGetVariablesPython(t *testing.T) {
+	interp := newTestInterpreter(t)
 
+	src := `
+import shipyard
+from shipyard import Shipfile, Variable
 
+class MyShipfile(Shipfile):
+    Variables = [
+        Variable("VAR_A", "First variable", "alpha"),
+        Variable("VAR_B", "Second variable", "beta"),
+    ]
 
+inst = MyShipfile()
+inst_vars = inst.get_variables()
+mod_vars = shipyard.get_variables(MyShipfile)
+`
+	mod, err := runPySrc(t, interp, src)
+	if err != nil {
+		t.Fatalf("failed to run python get_variables: %v", err)
+	}
+
+	instVarsObj := mod.Globals["inst_vars"]
+	modVarsObj := mod.Globals["mod_vars"]
+
+	checkList := func(obj py.Object, label string) {
+		lst, ok := obj.(*py.List)
+		if !ok {
+			t.Fatalf("%s: expected *py.List, got %T", label, obj)
+		}
+		if len(lst.Items) != 2 {
+			t.Fatalf("%s: expected 2 variables, got %d", label, len(lst.Items))
+		}
+		found := make(map[string]map[string]string)
+		for _, itm := range lst.Items {
+			dict, err := py.DictCheck(itm)
+			if err != nil {
+				t.Fatalf("%s: expected dict item, got error: %v", label, err)
+			}
+			name := string(dict["name"].(py.String))
+			found[name] = map[string]string{
+				"description": string(dict["description"].(py.String)),
+				"value":       string(dict["value"].(py.String)),
+			}
+		}
+		if found["VAR_A"]["value"] != "alpha" || found["VAR_A"]["description"] != "First variable" {
+			t.Errorf("%s: unexpected VAR_A: %+v", label, found["VAR_A"])
+		}
+		if found["VAR_B"]["value"] != "beta" || found["VAR_B"]["description"] != "Second variable" {
+			t.Errorf("%s: unexpected VAR_B: %+v", label, found["VAR_B"])
+		}
+	}
+
+	checkList(instVarsObj, "inst_vars")
+	checkList(modVarsObj, "mod_vars")
+}

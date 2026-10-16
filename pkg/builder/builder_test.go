@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,7 +23,7 @@ func TestDaggerBuildPipeline(t *testing.T) {
 
 	client := engine.Client()
 
-	// 1. Create a temporary source project directory on host
+	// Create a temporary Go source project and patch it
 	tempDir, err := os.MkdirTemp("", "shipyard-test-src-*")
 	if err != nil {
 		t.Fatal(err)
@@ -39,67 +40,51 @@ func main() {
 	fmt.Println("Message:", Message)
 }
 `
-	if err := os.WriteFile(filepath.Join(tempDir, "main.go"), []byte(helloGo), 0o644); err != nil {
+	patchedGo := strings.ReplaceAll(helloGo, `"unpatched"`, `"patched"`)
+	if err := os.WriteFile(filepath.Join(tempDir, "main.go"), []byte(patchedGo), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	// 2. Step 1: Pull source code into Dagger directory
-	srcDir, err := builder.PullSource(ctx, client, builder.SourceConfig{
-		LocalDir: tempDir,
-	})
+	src, err := builder.PullSource(ctx, client, builder.SourceConfig{LocalDir: tempDir})
 	if err != nil {
 		t.Fatalf("PullSource failed: %v", err)
 	}
 
-	// 3. Step 2: Run Python interpreter in a container layer on the source code
-	patchScript := `
-with open('main.go', 'r') as f:
-    content = f.read()
-content = content.replace('"unpatched"', '"patched by python interpreter"')
-with open('main.go', 'w') as f:
-    f.write(content)
-print("successfully patched main.go")
-`
-	patchedSource, stdout, err := builder.RunPython(ctx, client, srcDir, "/work/hello", patchScript, nil, "python:3-slim")
-	if err != nil {
-		t.Fatalf("RunPython failed: %v", err)
-	}
-	t.Logf("Python output: %s", stdout)
-
-	// 4. Step 3 & 4: Setting up build layers and building it
 	outputDir, err := os.MkdirTemp("", "shipyard-test-out-*")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(outputDir)
 
-	res, err := builder.BuildGeneric(ctx, client, builder.BuildOpts{
-		BaseImage:       "golang:1.22-alpine",
-		SourceName:      "hello",
-		Source:          patchedSource,
-		Setup:           "apk add --no-cache file",
-		Build:           "go build -o hello main.go",
-		ArtifactPattern: `^hello$`,
-		OutputDir:       outputDir,
-	})
+	const workdir = "/work/hello"
+	ctr := client.Container().
+		From("golang:1.22-alpine").
+		WithDirectory(workdir, src).
+		WithWorkdir(workdir).
+		WithExec([]string{"go", "build", "-o", "hello", "main.go"})
+
+	files, err := builder.FindFiles(ctx, ctr, workdir)
 	if err != nil {
-		t.Fatalf("BuildGeneric failed: %v", err)
+		t.Fatalf("FindFiles failed: %v", err)
 	}
 
-	if len(res.Artifacts) == 0 {
+	_, matches, err := builder.ExportArtifacts(ctx, ctr, files, workdir, `^hello$`, outputDir)
+	if err != nil {
+		t.Fatalf("ExportArtifacts failed: %v", err)
+	}
+
+	if len(matches) == 0 {
 		t.Fatalf("expected artifacts, got none")
 	}
 
-	// Verify that the built binary exists on the host in outputDir
 	binPath := filepath.Join(outputDir, "hello")
 	fi, err := os.Stat(binPath)
 	if err != nil {
-		t.Fatalf("expected built binary at %s, error: %v", binPath, err)
+		t.Fatalf("expected built binary at %s: %v", binPath, err)
 	}
 	if fi.Size() == 0 {
 		t.Fatalf("binary is 0 bytes")
 	}
 
-	t.Logf("Successfully built binary %s (size %d bytes)", binPath, fi.Size())
+	t.Logf("built binary %s (%d bytes)", binPath, fi.Size())
 }
-

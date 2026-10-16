@@ -36,10 +36,6 @@ func (a *ArchDriver) InstallBuildDeps(ctr *dagger.Container, pkg string) *dagger
 		WithExec([]string{"makepkg", "-so", "--noconfirm", "--skippgpcheck"})
 }
 
-func (a *ArchDriver) PrepareSource(ctr *dagger.Container, pkg string) *dagger.Container {
-	return ctr
-}
-
 func (a *ArchDriver) GetSourceDir(ctx context.Context, ctr *dagger.Container, pkg string) (string, error) {
 	src := fmt.Sprintf("/tmp/build/%s/src", pkg)
 	out, err := ctr.WithWorkdir(src).WithExec([]string{"ls", "-F"}).Stdout(ctx)
@@ -55,30 +51,8 @@ func (a *ArchDriver) GetSourceDir(ctx context.Context, ctr *dagger.Container, pk
 	return src, nil
 }
 
-func (a *ArchDriver) ApplyPatch(ctx context.Context, ctr *dagger.Container, patchContent string, pkg string) (*dagger.Container, error) {
-	patchPath := fmt.Sprintf("/tmp/build/%s/shipyard.patch", pkg)
-
-	return ctr.
-		WithNewFile(patchPath, patchContent).
-		WithWorkdir(fmt.Sprintf("/tmp/build/%s/src", pkg)).
-		WithExec([]string{"/bin/bash", "-c", "cd */ && patch -p1 < ../../shipyard.patch"}).
-		WithExec([]string{"/bin/bash", "-c", "find . -exec touch -h -d @0 {} +"}), nil
-}
-
-func (a *ArchDriver) Build(ctr *dagger.Container, pkg string) *dagger.Container {
-	return ctr.
-		WithUser("builder").
-		WithWorkdir(fmt.Sprintf("/tmp/build/%s", pkg)).
-		WithExec([]string{"makepkg", "-e", "--noconfirm"}).
-		WithExec([]string{"mkdir", "-p", "/tmp/build/artifacts"}).
-		WithExec([]string{"/bin/bash", "-c", "mv *.pkg.tar.zst /tmp/build/artifacts/"})
-}
-
-func (a *ArchDriver) GetArtifactPattern(pkg string) string {
-	return `.*\.pkg\.tar\.zst$`
-}
-
-func (a *ArchDriver) GetArtifactDir() string {
-	return "/tmp/build/artifacts"
-}
-
+func (a *ArchDriver) GetArtifactPattern(pkg string) string { return `.*\.pkg\.tar\.zst$` }
+func (a *ArchDriver) GetArtifactDir() string               { return "/tmp/build/artifacts" }
+func (a *ArchDriver) DistroName() string                   { return "arch" }
+func (a *ArchDriver) TopDir() string                       { return "/tmp/build" }
+func (a *ArchDriver) BuildEnvs() map[string]string         { return nil }

@@ -2,6 +2,7 @@ package builder
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,45 +11,6 @@ import (
 	"shipyard/pkg/shipfile"
 )
 
-// BuildOpts configures a container build.
-type BuildOpts struct {
-	// BaseImage is the container image in which Setup and Build run.
-	BaseImage string
-
-	// SourceName is the name of the project/source (e.g. "mytool-1.0").
-	SourceName string
-
-	// Source is the directory containing the (optionally patched) source code.
-	Source *dagger.Directory
-
-	// Workdir is the container directory where the source is mounted.
-	// Defaults to "/work/<SourceName>".
-	Workdir string
-
-	// RawPatch is an optional unified diff string applied with `patch -p1`.
-	RawPatch string
-
-	// Setup is an optional shell script run before Build to prepare dependencies.
-	Setup string
-
-	// Build is the shell command/script that builds the project.
-	Build string
-
-	// ArtifactPattern is a regex pattern matching files to export.
-	ArtifactPattern string
-
-	// ArtifactDir is the container directory searched for artifacts.
-	// Defaults to Workdir.
-	ArtifactDir string
-
-	// OutputDir is the destination directory on the host for exported artifacts.
-	// Defaults to "build-output".
-	OutputDir string
-
-	// Interactive drops into an interactive shell upon build completion or failure.
-	Interactive bool
-}
-
 // BuildResult contains the outcome of a successful build.
 type BuildResult struct {
 	Artifacts []string
@@ -56,83 +18,155 @@ type BuildResult struct {
 	Container *dagger.Container
 }
 
-// BuildGeneric sets up the build container layers, applies raw patches,
-// runs Setup and Build scripts, and exports matching artifacts.
-func BuildGeneric(ctx context.Context, client *dagger.Client, opts BuildOpts) (*BuildResult, error) {
-	if opts.BaseImage == "" {
-		return nil, fmt.Errorf("BaseImage must be specified")
+// BuildShipfileOpts defines the options for a full shipfile build pipeline.
+type BuildShipfileOpts struct {
+	// Image overrides the Shipfile's BaseImage.
+	Image string
+
+	// Version specifies the target version or tag to build.
+	Version string
+
+	// ArtifactPattern overrides the Shipfile's Artifacts regex.
+	ArtifactPattern string
+
+	// OutputDir overrides the destination directory for exported artifacts.
+	OutputDir string
+
+	// Interactive opens an interactive shell in the container.
+	Interactive bool
+}
+
+// BuildShipfile coordinates a generic (non-distro-package) build:
+//  1. Pull the pristine source code (from Git or local directory).
+//  2. Inject the shipyard binary and shipfile into the container.
+//  3. Call `shipyard build` which runs setup() and build() from the Shipfile.
+//  4. Export matching artifacts.
+func BuildShipfile(ctx context.Context, client *dagger.Client, sf *shipfile.Shipfile, opts BuildShipfileOpts) (*BuildResult, error) {
+	image := opts.Image
+	if image == "" {
+		image = sf.BaseImage
 	}
-	if opts.Build == "" {
-		return nil, fmt.Errorf("Build command must be specified for generic builder")
-	}
-	if opts.Source == nil {
-		return nil, fmt.Errorf("Source directory must be provided")
+	if image == "" {
+		return nil, fmt.Errorf("no base image specified; provide --image or set BaseImage in Shipfile")
 	}
 
-	sourceName := opts.SourceName
-	if sourceName == "" {
-		sourceName = "src"
+	ver := opts.Version
+	if ver == "" {
+		ver = "src"
 	}
+	sourceName := fmt.Sprintf("%s-%s", sf.Name, ver)
 
-	workdir := opts.Workdir
-	if workdir == "" {
-		workdir = "/work/" + sourceName
-	}
+	workdir := "/work/" + sourceName
 
 	outputDir := opts.OutputDir
 	if outputDir == "" {
 		outputDir = "build-output"
 	}
 
-	fmt.Printf("[*] Setting up build layer with base image: %s\n", opts.BaseImage)
+	// Pull pristine source code
+	fmt.Printf("[*] Pulling source code for %s...\n", sf.Name)
+	var srcCfg SourceConfig
 
-	// Layer 1: Base image + source directory + workdir
+	localSource := filepath.Join(sf.Dir, "sources", sf.Name)
+	if fi, err := os.Stat(localSource); err == nil && fi.IsDir() {
+		// Pre-cloned source takes priority over everything.
+		srcCfg.LocalDir = localSource
+	} else if sf.Url != "" && opts.Version != "" {
+		// A specific version was requested — clone that tag/branch from the URL.
+		srcCfg.Url = sf.Url
+		srcCfg.Tag = opts.Version
+	} else if sf.Url != "" && sf.Branch != "" {
+		srcCfg.Url = sf.Url
+		srcCfg.Branch = sf.Branch
+	} else {
+		// No pre-cloned source and no version pinned: build from the shipfile directory.
+		// This is the typical dev workflow (current working tree, unpushed changes, etc.).
+		srcCfg.LocalDir = sf.Dir
+	}
+
+	pristineSource, err := PullSource(ctx, client, srcCfg)
+	if err != nil {
+		return nil, fmt.Errorf("pull source: %w", err)
+	}
+
+	// Inject self binary and shipfile directory.
+	// Prefer a pre-built static binary (required for musl-based images like Alpine).
+	// go-run binaries are dynamically linked against glibc and will not run in Alpine.
+	self, err := findContainerBinary(sf.Dir)
+	if err != nil {
+		return nil, err
+	}
+	selfFile := client.Host().File(self)
+	shipfileDir := client.Host().Directory(sf.Dir, dagger.HostDirectoryOpts{
+		Exclude: []string{".git/", "__pycache__/", "build-output/", "sources/"},
+	})
+
+	fmt.Printf("[*] Setting up build container: %s\n", image)
 	ctr := client.Container().
-		From(opts.BaseImage).
-		WithDirectory(workdir, opts.Source).
+		From(image).
+		WithDirectory(workdir, pristineSource).
+		WithFile("/usr/local/bin/shipyard", selfFile, dagger.ContainerWithFileOpts{Permissions: 0o755}).
+		WithDirectory("/work/shipyard", shipfileDir).
+		WithEnvVariable("SHIPYARD_IN_CONTAINER", "1").
+		WithEnvVariable("SHIPYARD_MODE", "build").
+		WithEnvVariable("SHIPFILE", "/work/shipyard/shipfile.py").
+		WithEnvVariable("SHIPYARD_SOURCE", workdir).
+		WithEnvVariable("SHIPYARD_VERSION", ver).
 		WithWorkdir(workdir)
 
-	// Layer 2: Optional raw patch applied directly to the tree
-	if opts.RawPatch != "" {
-		fmt.Println("[*] Applying extra patch...")
-		ctr = ctr.
-			WithNewFile("/tmp/shipyard.patch", opts.RawPatch).
-			WithExec([]string{"/bin/sh", "-c", "patch -p1 < /tmp/shipyard.patch"})
+	// Snapshot source so 'shipyard reset' can restore it in an interactive session.
+	if opts.Interactive {
+		ctr = SnapshotSource(ctr, workdir)
 	}
 
-	// Layer 3: Setup script
-	if opts.Setup != "" {
-		fmt.Println("[*] Running setup layer...")
-		ctr = ctr.WithExec([]string{"/bin/sh", "-c", opts.Setup})
-	}
-
-	// Layer 4: Build script
 	ctrPreBuild := ctr
-	fmt.Println("[*] Running build layer...")
-	ctr = ctr.WithExec([]string{"/bin/sh", "-c", opts.Build})
+	fmt.Println("[*] Running shipyard build...")
+	buildCtr := ctr.WithExec([]string{"shipyard", "build"})
 
-	// Layer 5: Artifact collection & export
+	// Force execution and capture any build error with its output.
+	if _, err := buildCtr.Sync(ctx); err != nil {
+		var execErr *dagger.ExecError
+		if errors.As(err, &execErr) {
+			if execErr.Stdout != "" {
+				fmt.Print(execErr.Stdout)
+			}
+			if execErr.Stderr != "" {
+				fmt.Fprint(os.Stderr, execErr.Stderr)
+			}
+		}
+		if opts.Interactive {
+			fmt.Printf("[!] Build failed: %v. Dropping into interactive shell...\n", err)
+			_, _ = ctrPreBuild.Terminal().Sync(ctx)
+		}
+		return nil, fmt.Errorf("build failed: %w", err)
+	}
+	ctr = buildCtr
+
 	artifactPattern := opts.ArtifactPattern
+	if artifactPattern == "" {
+		artifactPattern = sf.Artifacts
+	}
 	if artifactPattern == "" {
 		artifactPattern = ".*"
 	}
-	srcDir := opts.ArtifactDir
+
+	srcDir := sf.ArtifactDir
 	if srcDir == "" {
 		srcDir = workdir
+	}
+
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+		return nil, fmt.Errorf("create output directory %s: %w", outputDir, err)
 	}
 
 	fmt.Printf("[*] Inspecting artifacts in %s matching '%s'...\n", srcDir, artifactPattern)
 	files, err := FindFiles(ctx, ctr, srcDir)
 	if err != nil {
 		if opts.Interactive {
-			fmt.Printf("[!] Build failed: %v. Dropping into interactive shell...\n", err)
-			target := ctrPreBuild
-			if target == nil {
-				target = ctr
-			}
-			_, _ = target.Terminal().Sync(ctx)
+			fmt.Printf("[!] Artifact collection failed: %v. Dropping into interactive shell...\n", err)
+			_, _ = ctr.Terminal().Sync(ctx)
 		}
-		return nil, fmt.Errorf("build execution failed: %w", err)
+		return nil, fmt.Errorf("artifact collection failed: %w", err)
 	}
 
 	ctr, matches, err := ExportArtifacts(ctx, ctr, files, srcDir, artifactPattern, outputDir)
@@ -156,115 +190,25 @@ func BuildGeneric(ctx context.Context, client *dagger.Client, opts BuildOpts) (*
 	}, nil
 }
 
-// BuildShipfileOpts defines the options for a full shipfile build pipeline.
-type BuildShipfileOpts struct {
-	// Image overrides the Shipfile's BaseImage.
-	Image string
-
-	// Version specifies the target version or tag to build.
-	Version string
-
-	// RawPatch is an optional unified diff string applied on top of the shipfile.
-	RawPatch string
-
-	// ArtifactPattern overrides the Shipfile's Artifacts regex.
-	ArtifactPattern string
-
-	// OutputDir overrides the destination directory for exported artifacts.
-	OutputDir string
-
-	// Interactive opens an interactive shell in the container.
-	Interactive bool
-
-	// ShipyardPkgDir points to the root directory of the shipyard package (contains shipyard/).
-	ShipyardPkgDir string
-}
-
-// BuildShipfile coordinates the entire workflow:
-//  1. Connect to Dagger
-//  2. Pull the pristine source code (from Git or local directory)
-//  3. Run the Python interpreter on the source code to apply shipfile CodePatches
-//  4. Set up the build container layers (BaseImage, Setup, Build)
-//  5. Build the project and export the matching artifacts
-func BuildShipfile(ctx context.Context, client *dagger.Client, sf *shipfile.Shipfile, opts BuildShipfileOpts) (*BuildResult, error) {
-	image := opts.Image
-	if image == "" {
-		image = sf.BaseImage
-	}
-	if image == "" {
-		return nil, fmt.Errorf("no base image specified; provide --image or set BaseImage in Shipfile")
-	}
-
-	pkgDir := opts.ShipyardPkgDir
-	if pkgDir == "" {
-		pkgDir = "."
-	}
-
-	ver := opts.Version
-	if ver == "" {
-		ver = "src"
-	}
-	sourceName := fmt.Sprintf("%s-%s", sf.Name, ver)
-
-	// Step 1: Pull pristine source code
-	fmt.Printf("[*] Pulling source code for %s...\n", sf.Name)
-	var srcCfg SourceConfig
-
-	// Check if local source directory exists (e.g. sources/<Name>)
-	localSource := filepath.Join(sf.Dir, "sources", sf.Name)
-	if fi, err := os.Stat(localSource); err == nil && fi.IsDir() {
-		srcCfg.LocalDir = localSource
-	} else if sf.Url != "" {
-		srcCfg.Url = sf.Url
-		if opts.Version != "" {
-			srcCfg.Tag = opts.Version
-		} else if sf.Branch != "" {
-			srcCfg.Branch = sf.Branch
+// findContainerBinary returns a path to a shipyard binary suitable for injection
+// into containers. Statically-linked builds are required for musl-based images
+// (e.g. Alpine); `go run` produces a glibc-linked binary that fails in those
+// environments. Checked in order: bin/shipyard-go, bin/shipyard (in sfDir then
+// CWD), then the running executable as a last resort.
+func findContainerBinary(sfDir string) (string, error) {
+	names := []string{"bin/shipyard", "bin/shipyard-go"}
+	dirs := []string{sfDir, "."}
+	for _, name := range names {
+		for _, dir := range dirs {
+			p := filepath.Join(dir, name)
+			if _, err := os.Stat(p); err == nil {
+				return p, nil
+			}
 		}
-	} else {
-		// Fallback to shipfile directory itself
-		srcCfg.LocalDir = sf.Dir
 	}
-
-	pristineSource, err := PullSource(ctx, client, srcCfg)
+	self, err := os.Executable()
 	if err != nil {
-		return nil, fmt.Errorf("pull source: %w", err)
+		return "", fmt.Errorf("resolve executable path: %w", err)
 	}
-
-	// Step 2: Run Python interpreter on the source code to apply shipfile CodePatches
-	fmt.Printf("[*] Running Python interpreter on source code (%s)...\n", sourceName)
-	patchedSource, err := RunShipfile(ctx, client, pristineSource, RunShipfileOpts{
-		ShipfileDir:    sf.Dir,
-		ShipyardPkgDir: pkgDir,
-		SourceName:     sourceName,
-		Version:        opts.Version,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("run shipfile python interpreter: %w", err)
-	}
-
-	// Step 3: Build using generic builder layers
-	artifactPattern := opts.ArtifactPattern
-	if artifactPattern == "" {
-		artifactPattern = sf.Artifacts
-	}
-
-	outputDir := opts.OutputDir
-	if outputDir == "" {
-		outputDir = "build-output"
-	}
-
-	return BuildGeneric(ctx, client, BuildOpts{
-		BaseImage:       image,
-		SourceName:      sourceName,
-		Source:          patchedSource,
-		RawPatch:        opts.RawPatch,
-		Setup:           sf.Setup,
-		Build:           sf.Build,
-		ArtifactPattern: artifactPattern,
-		ArtifactDir:     sf.ArtifactDir,
-		OutputDir:       outputDir,
-		Interactive:     opts.Interactive,
-	})
+	return self, nil
 }
-

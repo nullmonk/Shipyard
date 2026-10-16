@@ -3,6 +3,7 @@ package builder
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 
 	"dagger.io/dagger"
@@ -27,7 +28,7 @@ func Connect(ctx context.Context, remote string) (*Engine, error) {
 		fmt.Fprintf(os.Stderr, "[*] Connecting to remote Dagger engine: %s\n", remote)
 	}
 
-	client, err := dagger.Connect(ctx, dagger.WithLogOutput(os.Stderr))
+	client, err := dagger.Connect(ctx, dagger.WithLogOutput(io.Discard))
 	if err != nil {
 		return nil, fmt.Errorf("dagger connect: %w", err)
 	}

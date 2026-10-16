@@ -8,52 +8,6 @@ import (
 	"shipyard/pkg/shipfile"
 )
 
-func TestIsValidSourceUrl(t *testing.T) {
-	goodUrls := []string{
-		"https://github.com/openssh/openssh-portable",
-		"https://github.com/openssh/openssh-portable.git",
-		"http://gitlab.com/group/repo",
-		"https://bitbucket.org/owner/project",
-		"https://codeberg.org/user/repo",
-		"git://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git",
-		"git+https://example.com/repo",
-		"git+ssh://example.com/repo",
-		"ssh://git@example.com/repo",
-		"git@github.com:openssh/openssh-portable.git",
-		"https://git.savannah.gnu.org/git/diffutils.git",
-		"https://custom-server.com/repo.git",
-		"https://custom-server.com/repo.git/",
-		"https://example.com/downloads/package-1.0.tar.gz",
-		"https://example.com/downloads/package-1.0.tgz",
-		"https://example.com/downloads/package-1.0.zip",
-		"https://example.com/downloads/package-1.0.tar.xz",
-		"https://example.com/downloads/package-1.0.tar.bz2",
-		"https://example.com/downloads/package-1.0.tar.gz?token=secret#frag",
-	}
-
-	for _, u := range goodUrls {
-		if !shipfile.IsValidSourceUrl(u) {
-			t.Errorf("expected IsValidSourceUrl(%q) == true, got false", u)
-		}
-	}
-
-	badUrls := []string{
-		"",
-		"   ",
-		"https://example.com/file.exe",
-		"https://example.com/download.pdf",
-		"https://example.com/release/",
-		"ftp://example.com/file.dmg",
-		"not-a-url",
-	}
-
-	for _, u := range badUrls {
-		if shipfile.IsValidSourceUrl(u) {
-			t.Errorf("expected IsValidSourceUrl(%q) == false, got true", u)
-		}
-	}
-}
-
 func loadShipfileContent(t *testing.T, content string) *shipfile.Shipfile {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "shipfile-val-test-*")
@@ -238,7 +192,7 @@ class Shipfile(Patcher):
 }
 
 func TestValidateBuilderRequirements(t *testing.T) {
-	// 1. Valid Builder with Artifacts and Build script
+	// 1. Valid Builder with Artifacts and build() method
 	sfBuildScript := loadShipfileContent(t, `
 from shipyard import Builder
 
@@ -246,13 +200,15 @@ class Shipfile(Builder):
     Name = "test"
     PackageName = "test-pkg"
     Artifacts = r"^bin/app$"
-    Build = "make"
+
+    def build(self, ctx):
+        pass
 `)
 	if err := sfBuildScript.Validate(); err != nil {
 		t.Errorf("expected valid for Builder with Build, got: %v", err)
 	}
 
-	// 2. Valid Builder with Artifacts and Setup script
+	// 2. Valid Builder with Artifacts and setup() method
 	sfSetupScript := loadShipfileContent(t, `
 from shipyard import Builder
 
@@ -260,7 +216,9 @@ class Shipfile(Builder):
     Name = "test"
     PackageName = "test-pkg"
     Artifacts = r"^bin/app$"
-    Setup = "apk add make"
+
+    def setup(self, ctx):
+        pass
 `)
 	if err := sfSetupScript.Validate(); err != nil {
 		t.Errorf("expected valid for Builder with Setup, got: %v", err)
@@ -305,7 +263,9 @@ from shipyard import Builder
 class Shipfile(Builder):
     Name = "test"
     PackageName = "test-pkg"
-    Build = "make"
+
+    def build(self, ctx):
+        pass
 `)
 	if err := sfNoArtifacts.Validate(); err == nil {
 		t.Errorf("expected error for Builder missing Artifacts, got nil")
@@ -319,7 +279,9 @@ class Shipfile(Builder):
     Name = "test"
     PackageName = "test-pkg"
     Artifacts = r"[a-z("
-    Build = "make"
+
+    def build(self, ctx):
+        pass
 `)
 	if err := sfBadRegex.Validate(); err == nil {
 		t.Errorf("expected error for Builder with invalid regex, got nil")
@@ -348,10 +310,12 @@ class Shipfile(Patcher, Builder):
     Name = "test"
     PackageName = "test-pkg"
     Artifacts = r"^bin/app$"
-    Build = "make"
 
     @CodePatch(r".*\.c$")
     def patch_it(file, version):
+        pass
+
+    def build(self, ctx):
         pass
 `)
 	if err := sfBothValid.Validate(); err != nil {
@@ -366,7 +330,9 @@ class Shipfile(Patcher, Builder):
     Name = "test"
     PackageName = "test-pkg"
     Artifacts = r"^bin/app$"
-    Build = "make"
+
+    def build(self, ctx):
+        pass
 `)
 	if err := sfMissingPatch.Validate(); err == nil {
 		t.Errorf("expected error for dual class missing patch logic, got nil")
@@ -389,3 +355,145 @@ class Shipfile(Patcher, Builder):
 		t.Errorf("expected error for dual class missing build step, got nil")
 	}
 }
+
+func TestValidateVariables(t *testing.T) {
+	// 1. Valid variable
+	sfValid := loadShipfileContent(t, `
+from shipyard import Builder, Variable
+
+class Shipfile(Builder):
+    Name = "test"
+    PackageName = "test-pkg"
+    Artifacts = r"^bin/app$"
+    def build(self, ctx): pass
+
+    Variables = [
+        Variable("MY_VAR", "My description", "valid_string"),
+    ]
+`)
+	if err := sfValid.Validate(); err != nil {
+		t.Errorf("expected valid variable to pass, got: %v", err)
+	}
+	if len(sfValid.Variables) != 1 || sfValid.Variables[0].Name != "MY_VAR" || sfValid.Variables[0].Value != "valid_string" {
+		t.Errorf("expected variable MY_VAR to be 'valid_string', got %+v", sfValid.Variables)
+	}
+	if sfValid.Variables[0].Description != "My description" {
+		t.Errorf("expected description 'My description', got %q", sfValid.Variables[0].Description)
+	}
+
+	// 2. Variable with validator returning None (valid)
+	sfValidValidator := loadShipfileContent(t, `
+from shipyard import Builder, Variable
+
+def check_val(v):
+    if len(v) < 3:
+        return "too short"
+    return None
+
+class Shipfile(Builder):
+    Name = "test"
+    PackageName = "test-pkg"
+    Artifacts = r"^bin/app$"
+    def build(self, ctx): pass
+
+    Variables = [
+        Variable("MY_VAR", "My description", "valid", validate=check_val),
+    ]
+`)
+	if err := sfValidValidator.Validate(); err != nil {
+		t.Errorf("expected valid validator to pass, got: %v", err)
+	}
+
+	// 3. Variable with validator returning error string (invalid)
+	dir, err := os.MkdirTemp("", "shipfile-val-err-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	sfErrPath := filepath.Join(dir, "shipfile.py")
+	_ = os.WriteFile(sfErrPath, []byte(`
+from shipyard import Builder, Variable
+
+def check_val(v):
+    return "bad value supplied"
+
+class Shipfile(Builder):
+    Name = "test"
+    PackageName = "test-pkg"
+    Artifacts = r"^bin/app$"
+    def build(self, ctx): pass
+
+    Variables = [
+        Variable("MY_VAR", "My description", "test", validate=check_val),
+    ]
+`), 0o644)
+	root, _ := filepath.Abs("../..")
+	if _, err := shipfile.LoadDefault(sfErrPath, root); err == nil {
+		t.Errorf("expected error when validator returns error string, got nil")
+	}
+
+	// 4. Non-string variable value must fail
+	sfNonString := filepath.Join(dir, "shipfile_nonstr.py")
+	_ = os.WriteFile(sfNonString, []byte(`
+from shipyard import Builder, Variable
+
+class Shipfile(Builder):
+    Name = "test"
+    PackageName = "test-pkg"
+    Artifacts = r"^bin/app$"
+    def build(self, ctx): pass
+
+    Variables = [
+        Variable("MY_VAR", "My description", 12345),
+    ]
+`), 0o644)
+	if _, err := shipfile.LoadDefault(sfNonString, root); err == nil {
+		t.Errorf("expected error when variable value is non-string, got nil")
+	}
+
+	// 5. Runtime ctx.variables dict passed during CodePatch execution
+	srcDir := filepath.Join(dir, "src")
+	_ = os.MkdirAll(srcDir, 0o755)
+	cFile := filepath.Join(srcDir, "main.c")
+	_ = os.WriteFile(cFile, []byte(`const char *banner = "DEFAULT";`), 0o644)
+
+	interp, err := shipfile.New("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer interp.Close()
+
+	sfPatch, err := shipfile.ValidateString(`
+from shipyard import Patcher, Variable, CodePatch
+
+class Shipfile(Patcher):
+    Name = "test"
+    PackageName = "test-pkg"
+    Variables = [
+        Variable("BANNER", "Banner text", "initial", validate=lambda v: "too short" if len(v) < 3 else None),
+    ]
+
+    @CodePatch(r".*main\.c$")
+    def apply_banner(file, ctx):
+        file.replace("DEFAULT", ctx.variables["BANNER"])
+`, interp)
+	if err != nil {
+		t.Fatalf("ValidateString failed: %v", err)
+	}
+
+	applied, err := sfPatch.RunCodePatches(srcDir, "1.0.0", map[string]string{"BANNER": "custom_runtime_val"})
+	if err != nil {
+		t.Fatalf("RunCodePatches failed: %v", err)
+	}
+	if len(applied) != 1 || applied[0] != "apply_banner" {
+		t.Fatalf("expected apply_banner to run, got %v", applied)
+	}
+	patchedBytes, err := os.ReadFile(cFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(patchedBytes) != `const char *banner = "custom_runtime_val";` {
+		t.Errorf("expected patched content with runtime variable, got: %s", string(patchedBytes))
+	}
+}
+

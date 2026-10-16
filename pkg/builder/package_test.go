@@ -32,7 +32,7 @@ func TestSnapshotAndGeneratePatch(t *testing.T) {
 	// 2. Snapshot pristine source (git init & commit)
 	ctr = builder.SnapshotSource(ctr, sourceDir)
 
-	// 3. Simulate python shipfile patcher modifying the source tree
+	// 3. Simulate shipfile patcher modifying the source tree
 	ctr = ctr.WithNewFile(sourceDir+"/config.c", "char *version = \"1.0-shipyard\";\n")
 
 	// 4. Generate patch diff

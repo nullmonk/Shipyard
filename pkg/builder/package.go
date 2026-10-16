@@ -20,9 +20,6 @@ type BuildPackageOpts struct {
 	// Version specifies the target version or tag.
 	Version string
 
-	// RawPatch is an optional unified diff string applied on top of the shipfile changes.
-	RawPatch string
-
 	// ArtifactPattern overrides the pattern matching built packages.
 	ArtifactPattern string
 
@@ -31,13 +28,10 @@ type BuildPackageOpts struct {
 
 	// Interactive drops into an interactive shell upon build completion or failure.
 	Interactive bool
-
-	// ShipyardPkgDir points to the root directory containing the shipyard Python package.
-	ShipyardPkgDir string
 }
 
-// SnapshotSource commits the pristine unpacked source so that shipfile changes
-// can be diffed out cleanly later.
+// SnapshotSource commits the pristine unpacked source so the in-container build
+// can diff changes made by `shipyard patch` before applying them via distro tools.
 func SnapshotSource(ctr *dagger.Container, sourceDir string) *dagger.Container {
 	gitCmd := []string{"git", "-c", "user.name=shipyard", "-c", "user.email=shipyard@localhost"}
 
@@ -59,10 +53,10 @@ func GeneratePatch(ctx context.Context, ctr *dagger.Container, sourceDir string)
 
 // BuildPackage executes a distro package build:
 //  1. Sets up the distro container and installs package build dependencies.
-//  2. Unpacks the pristine distro source and snapshots it in git.
-//  3. Runs the Python shipfile (@CodePatch) against the source tree in a Python container layer.
-//  4. Diff-extracts the changes as a patch, resets the source, and applies it the distro's way.
-//  5. Builds the package inside the distro container.
+//  2. Snapshots the pristine source in git so the in-container build can diff later.
+//  3. Injects the shipyard binary and shipfile into the container.
+//  4. Calls `shipyard patch` to apply CodePatch functions.
+//  5. Calls `shipyard build` which generates the patch, applies it via distro tools, and builds.
 //  6. Extracts the matching package artifacts to the host.
 func BuildPackage(ctx context.Context, client *dagger.Client, sf *shipfile.Shipfile, image string, opts BuildPackageOpts) (*BuildResult, error) {
 	driver, err := drivers.GetDriver(image)
@@ -83,70 +77,75 @@ func BuildPackage(ctx context.Context, client *dagger.Client, sf *shipfile.Shipf
 
 	fmt.Printf("[*] Starting package build for %s on %s\n", pkgName, image)
 
-	// Step 1: Distro container setup, build deps & pristine source preparation
+	// Step 1: Distro setup and build deps
 	ctr := client.Container().From(image)
 	ctr = driver.Setup(ctr)
 	ctr = driver.InstallBuildDeps(ctr, pkgName)
-	ctr = driver.PrepareSource(ctr, pkgName)
 
 	sourceDir, err := driver.GetSourceDir(ctx, ctr, pkgName)
 	if err != nil {
 		return nil, fmt.Errorf("get source directory: %w", err)
 	}
-	sourceName := filepath.Base(sourceDir)
 
-	// Step 2: Snapshot pristine source
-	ctr = SnapshotSource(ctr, sourceDir)
+	// Step 2: Copy pristine source for later diff generation and interactive reset.
+	ctr = ctr.
+		WithExec([]string{"/bin/sh", "-c", fmt.Sprintf("cp -a '%s' /tmp/.shipyard-pristine", sourceDir)}).
+		WithEnvVariable("SHIPYARD_PRISTINE", "/tmp/.shipyard-pristine")
 
-	// Step 3: Run Python interpreter on pristine source to PATCH it (not build)
-	patchContent := ""
-	if sf != nil && sf.Dir != "" {
-		fmt.Printf("[*] Running Python shipfile from %s on %s...\n", sf.Dir, sourceName)
-		patchedSource, err := RunShipfile(ctx, client, ctr.Directory(sourceDir), RunShipfileOpts{
-			ShipfileDir:    sf.Dir,
-			ShipyardPkgDir: opts.ShipyardPkgDir,
-			SourceName:     sourceName,
-			Version:        opts.Version,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("run shipfile patcher: %w", err)
-		}
-
-		// Put patched source back into container to generate diff
-		ctr = ctr.WithDirectory(sourceDir, patchedSource)
-		patchContent, err = GeneratePatch(ctx, ctr, sourceDir)
-		if err != nil {
-			return nil, fmt.Errorf("generate patch from diff: %w", err)
-		}
-	}
-
-	if opts.RawPatch != "" {
-		patchContent += "\n" + opts.RawPatch
-	}
-
-	if strings.TrimSpace(patchContent) == "" {
-		return nil, fmt.Errorf("the shipfile did not change the source; there is nothing to build")
-	}
-
-	lineCount := len(strings.Split(strings.TrimSpace(patchContent), "\n"))
-	fmt.Printf("[*] Generated patch (%d lines)\n", lineCount)
-
-	// Step 4: Reset tree to pristine, apply patch the distro's way
-	ctr = ctr.WithWorkdir(sourceDir).
-		WithExec([]string{"git", "reset", "-q", "--hard"}).
-		WithExec([]string{"git", "clean", "-q", "-fdx"}).
-		WithExec([]string{"rm", "-rf", ".git"})
-
-	ctr, err = driver.ApplyPatch(ctx, ctr, patchContent, pkgName)
+	// Step 3: Read distro version from /etc/os-release
+	distroVersion, err := ctr.
+		WithExec([]string{"/bin/sh", "-c", `grep '^VERSION_ID=' /etc/os-release | cut -d= -f2 | tr -d '"'`}).
+		Stdout(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("apply patch: %w", err)
+		distroVersion = ""
+	}
+	distroVersion = strings.TrimSpace(distroVersion)
+
+	// Step 4: Inject self binary and shipfile directory
+	self, err := os.Executable()
+	if err != nil {
+		return nil, fmt.Errorf("resolve executable path: %w", err)
+	}
+	selfFile := client.Host().File(self)
+	shipfileDir := client.Host().Directory(sf.Dir, dagger.HostDirectoryOpts{
+		Exclude: []string{".git/", "__pycache__/", "build-output/", "sources/"},
+	})
+
+	ctr = ctr.
+		WithFile("/usr/local/bin/shipyard", selfFile, dagger.ContainerWithFileOpts{Permissions: 0o755}).
+		WithDirectory("/work/shipyard", shipfileDir)
+
+	// Step 5: Set environment variables for in-container execution
+	ctr = ctr.
+		WithEnvVariable("SHIPYARD_IN_CONTAINER", "1").
+		WithEnvVariable("SHIPYARD_MODE", "package").
+		WithEnvVariable("SHIPFILE", "/work/shipyard/shipfile.py").
+		WithEnvVariable("SHIPYARD_SOURCE", sourceDir).
+		WithEnvVariable("SHIPYARD_PACKAGE", pkgName).
+		WithEnvVariable("SHIPYARD_DISTRO", driver.DistroName()).
+		WithEnvVariable("SHIPYARD_DISTRO_VERSION", distroVersion).
+		WithEnvVariable("SHIPYARD_TOPDIR", driver.TopDir())
+
+	if opts.Version != "" {
+		ctr = ctr.WithEnvVariable("SHIPYARD_VERSION", opts.Version)
 	}
 
-	// Step 5: Perform the build back in the target distro container
-	ctrPreBuild := ctr
-	ctr = driver.Build(ctr, pkgName)
+	for k, v := range driver.BuildEnvs() {
+		ctr = ctr.WithEnvVariable(k, v)
+	}
 
-	// Step 6: Extract artifacts using Shipfile artifacts pattern (or driver default)
+	// Step 6: patch → apply → build
+	ctrPreBuild := ctr
+	fmt.Println("[*] Running shipyard patch...")
+	ctr = ctr.WithExec([]string{"shipyard", "patch"})
+
+	fmt.Println("[*] Running shipyard apply...")
+	ctr = ctr.WithExec([]string{"shipyard", "apply"})
+
+	fmt.Println("[*] Running shipyard build...")
+	ctr = ctr.WithExec([]string{"shipyard", "build"})
+
+	// Step 7: Extract artifacts
 	artifactPattern := opts.ArtifactPattern
 	if artifactPattern == "" && sf != nil {
 		artifactPattern = sf.Artifacts
@@ -158,7 +157,6 @@ func BuildPackage(ctx context.Context, client *dagger.Client, sf *shipfile.Shipf
 	srcDir := driver.GetArtifactDir()
 	outputDir := opts.OutputDir
 	if outputDir == "" {
-		// e.g. build-output/debian/bookworm or build-output
 		cleanImg := strings.ReplaceAll(image, ":", "/")
 		outputDir = filepath.Join("build-output", cleanImg)
 	}
@@ -201,4 +199,3 @@ func BuildPackage(ctx context.Context, client *dagger.Client, sf *shipfile.Shipf
 		Container: ctr,
 	}, nil
 }
-

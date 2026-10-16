@@ -21,7 +21,7 @@ func NewAlpineDriver(image string) *AlpineDriver {
 
 func (a *AlpineDriver) Setup(ctr *dagger.Container) *dagger.Container {
 	return ctr.
-		WithExec([]string{"apk", "add", "--no-cache", "alpine-sdk", "git", "patch"}).
+		WithExec([]string{"apk", "add", "--no-cache", "alpine-sdk", "git", "patch", "vim"}).
 		WithExec([]string{"abuild-keygen", "-a", "-n"}).
 		WithExec([]string{"/bin/sh", "-c", "cp /root/.abuild/*.pub /etc/apk/keys/"}).
 		WithExec([]string{"mkdir", "-p", "/tmp/build"})
@@ -45,10 +45,6 @@ func (a *AlpineDriver) InstallBuildDeps(ctr *dagger.Container, pkg string) *dagg
 		WithExec([]string{"abuild", "-F", "fetch", "unpack", "prepare"})
 }
 
-func (a *AlpineDriver) PrepareSource(ctr *dagger.Container, pkg string) *dagger.Container {
-	return ctr
-}
-
 func (a *AlpineDriver) GetSourceDir(ctx context.Context, ctr *dagger.Container, pkg string) (string, error) {
 	src := fmt.Sprintf("/tmp/build/%s/src", pkg)
 	out, err := ctr.WithWorkdir(src).WithExec([]string{"ls", "-F"}).Stdout(ctx)
@@ -64,29 +60,8 @@ func (a *AlpineDriver) GetSourceDir(ctx context.Context, ctr *dagger.Container, 
 	return src, nil
 }
 
-func (a *AlpineDriver) ApplyPatch(ctx context.Context, ctr *dagger.Container, patchContent string, pkg string) (*dagger.Container, error) {
-	pkgDir := fmt.Sprintf("/tmp/build/%s", pkg)
-	patchPath := fmt.Sprintf("%s/shipyard.patch", pkgDir)
-
-	return ctr.
-		WithWorkdir(pkgDir).
-		WithNewFile(patchPath, patchContent).
-		WithExec([]string{"sed", "-i", `s/^source="/source="\n\tshipyard.patch\n\t/`, "APKBUILD"}).
-		WithExec([]string{"/bin/sh", "-c", `echo 'options="$options !check"' >> APKBUILD`}).
-		WithExec([]string{"abuild", "-F", "checksum"}), nil
-}
-
-func (a *AlpineDriver) Build(ctr *dagger.Container, pkg string) *dagger.Container {
-	return ctr.
-		WithWorkdir(fmt.Sprintf("/tmp/build/%s", pkg)).
-		WithExec([]string{"abuild", "-F", "-r"})
-}
-
-func (a *AlpineDriver) GetArtifactPattern(pkg string) string {
-	return `.*\.apk$`
-}
-
-func (a *AlpineDriver) GetArtifactDir() string {
-	return "/root/packages"
-}
-
+func (a *AlpineDriver) GetArtifactPattern(pkg string) string { return `.*\.apk$` }
+func (a *AlpineDriver) GetArtifactDir() string               { return "/root/packages" }
+func (a *AlpineDriver) DistroName() string                   { return "alpine" }
+func (a *AlpineDriver) TopDir() string                       { return "/tmp/build" }
+func (a *AlpineDriver) BuildEnvs() map[string]string         { return nil }
