@@ -44,7 +44,7 @@ class Shipfile(Patcher):
 
     Dependencies = ["openssh-server > 6"]
 
-Variables = [
+    Variables = [
         Variable(
             "__BANNER__",
             "Default SSH version addendum / banner",
