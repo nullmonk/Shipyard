@@ -68,7 +68,7 @@ func main() {
 		t.Fatalf("FindFiles failed: %v", err)
 	}
 
-	_, matches, err := builder.ExportArtifacts(ctx, ctr, files, workdir, `^hello$`, outputDir)
+	_, matches, err := builder.ExportArtifacts(ctx, ctr, files, workdir, `^hello$`, outputDir, nil)
 	if err != nil {
 		t.Fatalf("ExportArtifacts failed: %v", err)
 	}

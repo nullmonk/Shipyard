@@ -121,11 +121,56 @@ func BuildPackage(ctx context.Context, client *dagger.Client, sf *shipfile.Shipf
 		fmt.Fprintf(out, "    Package: %s  Driver: %s\n", pkgName, driver.DistroName())
 	}
 
+	syncContainer := func(c *dagger.Container, stepName string) (*dagger.Container, error) {
+		synced, err := c.Sync(ctx)
+		if err != nil {
+			var execErr *dagger.ExecError
+			if errors.As(err, &execErr) {
+				if execErr.Stdout != "" {
+					outStr := execErr.Stdout
+					if !strings.HasSuffix(outStr, "\n") {
+						outStr += "\n"
+					}
+					fmt.Fprint(cmdOut, outStr)
+					if cmdOut == io.Discard {
+						fmt.Fprint(out, outStr)
+					}
+				}
+				if execErr.Stderr != "" {
+					errStr := execErr.Stderr
+					if !strings.HasSuffix(errStr, "\n") {
+						errStr += "\n"
+					}
+					fmt.Fprint(cmdErr, errStr)
+				}
+			}
+			return nil, fmt.Errorf("%s: %w", stepName, err)
+		}
+		return synced, nil
+	}
+
 	// Step 1: Distro setup and build deps
 	ctr := client.Container().From(image)
 	ctr = driver.Setup(ctr)
+	if synced, err := syncContainer(ctr, "distro setup failed"); err != nil {
+		if opts.Interactive {
+			dropIntoShell(ctx, client, os.Stderr, ctr)
+		}
+		return nil, err
+	} else {
+		ctr = synced
+	}
+
 	fmt.Fprintf(out, "[*] Installing build dependencies for %s...\n", pkgName)
 	ctr = driver.InstallBuildDeps(ctr, pkgName)
+	if synced, err := syncContainer(ctr, "install build dependencies failed"); err != nil {
+		if opts.Interactive {
+			dropIntoShell(ctx, client, os.Stderr, ctr)
+		}
+		return nil, err
+	} else {
+		ctr = synced
+	}
 
 	sourceDir, err := driver.GetSourceDir(ctx, ctr, pkgName)
 	if err != nil {
@@ -307,7 +352,7 @@ func BuildPackage(ctx context.Context, client *dagger.Client, sf *shipfile.Shipf
 		return nil, fmt.Errorf("artifact collection failed: %w", err)
 	}
 
-	ctr, matches, err := ExportArtifacts(ctx, ctr, files, srcDir, artifactPattern, outputDir)
+	ctr, matches, err := ExportArtifacts(ctx, ctr, files, srcDir, artifactPattern, outputDir, out)
 	if err != nil {
 		if opts.Interactive {
 			dropIntoShell(ctx, client, os.Stderr, ctr)

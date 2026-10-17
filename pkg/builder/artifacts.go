@@ -3,6 +3,7 @@ package builder
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -40,7 +41,11 @@ func FindFiles(ctx context.Context, ctr *dagger.Container, directory string) ([]
 
 // ExportArtifacts filters container files relative to srcDir using artifactPattern
 // and exports all matching artifacts to outputDir on the host.
-func ExportArtifacts(ctx context.Context, ctr *dagger.Container, files []string, srcDir, artifactPattern, outputDir string) (*dagger.Container, []string, error) {
+// Progress messages are written to out; if nil, os.Stdout is used.
+func ExportArtifacts(ctx context.Context, ctr *dagger.Container, files []string, srcDir, artifactPattern, outputDir string, out io.Writer) (*dagger.Container, []string, error) {
+	if out == nil {
+		out = os.Stdout
+	}
 	re, err := regexp.Compile(artifactPattern)
 	if err != nil {
 		return nil, nil, fmt.Errorf("invalid artifact regex %q: %w", artifactPattern, err)
@@ -57,7 +62,7 @@ func ExportArtifacts(ctx context.Context, ctr *dagger.Container, files []string,
 		return nil, nil, fmt.Errorf("the build produced no artifacts matching %q in %s", artifactPattern, srcDir)
 	}
 
-	fmt.Printf("[*] Found %d artifacts matching '%s'\n", len(matches), artifactPattern)
+	fmt.Fprintf(out, "[*] Found %d artifacts matching '%s'\n", len(matches), artifactPattern)
 
 	ctr = ctr.WithExec([]string{"mkdir", "-p", "/tmp/artifacts"})
 	ctr = ctr.WithNewFile("/tmp/artifacts_list", strings.Join(matches, "\n"))
@@ -80,9 +85,9 @@ func ExportArtifacts(ctx context.Context, ctr *dagger.Container, files []string,
 		return nil, nil, fmt.Errorf("export artifacts: %w", err)
 	}
 
-	fmt.Printf("[+] Build complete. Artifacts exported to %s:\n", absOutput)
+	fmt.Fprintf(out, "[+] Build complete. Artifacts exported to %s:\n", absOutput)
 	for _, m := range matches {
-		fmt.Printf("  - %s\n", filepath.Base(m))
+		fmt.Fprintf(out, "  - %s\n", filepath.Base(m))
 	}
 
 	return ctr, matches, nil

@@ -51,7 +51,7 @@ func GetDriver(image string) (DistroDriver, error) {
 	if strings.Contains(img, "alpine") {
 		return NewAlpineDriver(image), nil
 	}
-	if strings.Contains(img, "rocky") {
+	if strings.Contains(img, "rocky") || strings.Contains(img, "alma") {
 		return NewRockyDriver(image), nil
 	}
 	if strings.Contains(img, "centos") {

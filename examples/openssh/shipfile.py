@@ -42,7 +42,9 @@ class Shipfile(Patcher):
     # Upstream tags look like V_9_9_P2, V_10_6_P1, etc.
     VersionTags = "V_*"
 
-    Variables = [
+    Dependencies = ["openssh-server > 6"]
+
+Variables = [
         Variable(
             "__BANNER__",
             "Default SSH version addendum / banner",

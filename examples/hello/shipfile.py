@@ -3,6 +3,7 @@ from shipyard import CodePatch, CodeFile, Version, Builder, Run
 class Shipfile(Builder):
     Name = "hello"
     PackageName = "hello"
+    Dependencies = ["glibc > 2.30"]
     BaseImage = "golang:1.22-alpine"
     Artifacts = r"^hello$"
 

@@ -15,17 +15,30 @@ import (
 )
 
 var (
+	buildName         string
 	buildPackageImage string
 	buildPackageName  string
 	buildImage        string
+	buildSystem       string
 	buildVersion      string
 	buildOutput       string
 	buildArtifacts    string
 	buildInteractive  bool
 	buildLocal        bool
+	buildNoRemote     bool
+	buildNoStream     bool
 	buildCopy         string
 	buildNoTest       bool
 )
+
+func isDaggerRunnerURI(s string) bool {
+	for _, p := range []string{"tcp://", "unix://", "docker-container://", "docker-image://", "kube-pod://", "ssh://"} {
+		if strings.HasPrefix(s, p) {
+			return true
+		}
+	}
+	return false
+}
 
 func newBuildCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -33,6 +46,8 @@ func newBuildCmd() *cobra.Command {
 		Short: "Build a generic project or distro package",
 		Long: `Build executes a shipfile.
 
+If a remote server is active (via 'shipyard remote connect' or 'shipyard remote use <name>'),
+the build runs on the remote server automatically (use 'shipyard remote use local' or '--no-remote' to build locally).
 Without --package: runs a generic build in a container (BaseImage).
 With --package <image>: spins up a distro container to create an OS package.
 With --local: runs setup() and build() directly on the host without Dagger.`,
@@ -49,13 +64,17 @@ With --local: runs setup() and build() directly on the host without Dagger.`,
 		RunE: runBuild,
 	}
 	cmd.Flags().BoolVarP(&buildLocal, "local", "l", false, "run setup() and build() directly on host without Dagger")
+	cmd.Flags().BoolVar(&buildNoRemote, "no-remote", false, "run container build locally with Dagger even if a remote profile is active")
+	cmd.Flags().StringVar(&buildName, "name", "", "override tool name when building on a remote server")
 	cmd.Flags().StringVarP(&buildPackageImage, "package", "p", "", "distro container image for package build (e.g. ubuntu:22.04)")
 	cmd.Flags().StringVar(&buildPackageName, "package-name", "", "override package name (defaults to Shipfile PackageName or Name)")
 	cmd.Flags().StringVarP(&buildImage, "image", "i", "", "base container image for generic build (defaults to Shipfile BaseImage)")
+	cmd.Flags().StringVarP(&buildSystem, "system", "s", "", "target tracked system name or image on remote server")
 	cmd.Flags().StringVarP(&buildVersion, "version", "v", "", "target version/tag to build ($SHIPYARD_VERSION)")
 	cmd.Flags().StringVarP(&buildOutput, "output", "o", "", "output directory for artifacts (default: build-output)")
 	cmd.Flags().StringVarP(&buildArtifacts, "artifacts", "a", "", "artifact regex pattern")
 	cmd.Flags().BoolVar(&buildInteractive, "interactive", false, "drop into interactive container shell on error")
+	cmd.Flags().BoolVar(&buildNoStream, "no-stream", false, "trigger remote build asynchronously without streaming output")
 	cmd.Flags().StringVarP(&buildCopy, "copy", "c", "", "copy local directory (or specified path) into container instead of git")
 	cmd.Flags().Lookup("copy").NoOptDefVal = "."
 	cmd.Flags().BoolVar(&buildNoTest, "no-test", false, "skip running tests defined in shipfile")
@@ -146,7 +165,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		return runTests(sf, version)
 	}
 
-	if buildPackageImage != "" {
+	if buildPackageImage != "" || buildSystem != "" {
 		if !sf.IsPatch() {
 			return fmt.Errorf("cannot run package build: %s does not subclass 'Patcher'", sf.Path)
 		}
@@ -156,8 +175,43 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	if !buildNoRemote && !isDaggerRunnerURI(globalRemote) {
+		if baseURL, tok, rErr := resolveRemoteEndpoint("", ""); rErr == nil && baseURL != "" {
+			raw, readErr := os.ReadFile(sfPath)
+			if readErr != nil {
+				return fmt.Errorf("read %s: %w", sfPath, readErr)
+			}
+			var verbosePtr *bool
+			if cmd.Flags().Changed("verbose") || globalVerbose {
+				v := globalVerbose
+				verbosePtr = &v
+			}
+			reqBody := remoteBuildRequest{
+				Name:            buildName,
+				Shipfile:        string(raw),
+				System:          buildSystem,
+				PackageImage:    buildPackageImage,
+				PackageName:     buildPackageName,
+				Image:           buildImage,
+				Version:         version,
+				ArtifactPattern: buildArtifacts,
+				NoTest:          buildNoTest,
+				Verbose:         verbosePtr,
+				Stream:          !buildNoStream || buildInteractive,
+				Interactive:     buildInteractive,
+			}
+			fmt.Printf("[*] Building on remote %s...\n", baseURL)
+			return executeRemoteBuildStream(baseURL, tok, reqBody)
+		}
+	}
+
+	daggerRemote := ""
+	if isDaggerRunnerURI(globalRemote) {
+		daggerRemote = globalRemote
+	}
+
 	ctx := context.Background()
-	engine, err := builder.Connect(ctx, globalRemote, globalVerbose)
+	engine, err := builder.Connect(ctx, daggerRemote, globalVerbose)
 	if err != nil {
 		return fmt.Errorf("connect to Dagger: %w", err)
 	}
@@ -199,7 +253,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 
 	outDir := buildOutput
 	if outDir == "" {
-		outDir = "build-output"
+		outDir = filepath.Join("build-output", "standalone", sf.Name)
 	}
 	res, err := builder.BuildShipfile(ctx, engine.Client(), sf, builder.BuildShipfileOpts{
 		Image:           buildImage,

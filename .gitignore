@@ -36,3 +36,4 @@ wheels/
 
 # Built binaries
 bin/
+/shipyard

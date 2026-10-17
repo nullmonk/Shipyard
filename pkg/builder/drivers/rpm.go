@@ -27,10 +27,14 @@ func NewRPMDriver(image string) *RPMDriver {
 }
 
 func (r *RPMDriver) MajorVersion() int {
-	re := regexp.MustCompile(`:(\d+)`)
-	m := re.FindStringSubmatch(r.Image)
-	if len(m) > 1 {
-		if v, err := strconv.Atoi(m[1]); err == nil {
+	tag := r.Image
+	if idx := strings.LastIndex(tag, ":"); idx >= 0 {
+		tag = tag[idx+1:]
+	}
+	re := regexp.MustCompile(`\d+`)
+	m := re.FindString(tag)
+	if m != "" {
+		if v, err := strconv.Atoi(m); err == nil {
 			return v
 		}
 	}
@@ -40,6 +44,9 @@ func (r *RPMDriver) MajorVersion() int {
 func (r *RPMDriver) Setup(ctr *dagger.Container) *dagger.Container {
 	if r.EnableRepoCmd != nil {
 		ctr = r.EnableRepoCmd(ctr)
+	}
+	if strings.Contains(strings.ToLower(r.Image), "suse") {
+		return ctr
 	}
 	return ctr.
 		WithExec([]string{"yum", "update", "-y"}).
@@ -51,6 +58,13 @@ func (r *RPMDriver) Setup(ctr *dagger.Container) *dagger.Container {
 }
 
 func (r *RPMDriver) InstallBuildDeps(ctr *dagger.Container, pkg string) *dagger.Container {
+	if strings.Contains(strings.ToLower(r.Image), "suse") {
+		return ctr.
+			WithWorkdir(r.topDir).
+			WithExec([]string{"zypper", "-n", "source-install", "-d", pkg}).
+			WithExec([]string{"zypper", "-n", "source-install", pkg}).
+			WithExec([]string{"/bin/sh", "-c", fmt.Sprintf("rpmbuild %s -bp SOURCES/*.spec || rpmbuild %s -bp SPECS/*.spec", r.RPMBuildArgs, r.RPMBuildArgs)})
+	}
 	return ctr.
 		WithWorkdir(r.topDir).
 		WithExec([]string{"yum-builddep", "--skip-broken", "-y", pkg}).
@@ -201,7 +215,10 @@ func NewRockyDriver(image string) *RPMDriver {
 		}
 		return ctr.
 			WithExec([]string{"dnf", "install", "-y", "epel-release", "dnf-plugins-core"}).
-			WithExec([]string{"dnf", "config-manager", "--set-enabled", repo})
+			WithExec([]string{
+				"/bin/sh", "-c",
+				fmt.Sprintf("dnf config-manager --enable %s 2>/dev/null || dnf config-manager --set-enabled %s 2>/dev/null || true", repo, repo),
+			})
 	}
 	return d
 }
@@ -210,16 +227,35 @@ func NewRockyDriver(image string) *RPMDriver {
 func NewCentOSDriver(image string) *RPMDriver {
 	d := NewRPMDriver(image)
 	d.EnableRepoCmd = func(ctr *dagger.Container) *dagger.Container {
-		ctr = ctr.WithExec([]string{
-			"/bin/sh", "-c",
-			`sed -i -e 's/mirrorlist/#mirrorlist/g' ` +
-				`-e 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' ` +
-				`/etc/yum.repos.d/CentOS-*`,
-		})
-		if d.MajorVersion() == 8 {
+		isStream := strings.Contains(strings.ToLower(d.Image), "stream")
+		major := d.MajorVersion()
+
+		// Legacy CentOS 7/8 (non-stream) reached EOL and repos moved to vault.centos.org.
+		// Only run sed if CentOS-* files exist, and only for legacy versions.
+		if major > 0 && major <= 8 && !isStream {
+			ctr = ctr.WithExec([]string{
+				"/bin/sh", "-c",
+				`for f in /etc/yum.repos.d/CentOS-*; do ` +
+					`[ -f "$f" ] && sed -i -e 's/mirrorlist/#mirrorlist/g' -e 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' "$f"; ` +
+					`done || true`,
+			})
+		}
+
+		if major == 8 {
 			ctr = ctr.
 				WithExec([]string{"dnf", "install", "-y", "dnf-plugins-core"}).
-				WithExec([]string{"dnf", "config-manager", "--set-enabled", "powertools"})
+				WithExec([]string{
+					"/bin/sh", "-c",
+					`dnf config-manager --enable powertools 2>/dev/null || dnf config-manager --set-enabled powertools 2>/dev/null || true`,
+				})
+			return ctr
+		}
+
+		if major >= 9 || isStream {
+			ctr = ctr.WithExec([]string{
+				"/bin/sh", "-c",
+				`dnf config-manager --enable crb 2>/dev/null || dnf config-manager --set-enabled crb 2>/dev/null || true`,
+			})
 		}
 		return ctr
 	}

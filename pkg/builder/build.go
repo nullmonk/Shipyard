@@ -93,7 +93,7 @@ func BuildShipfile(ctx context.Context, client *dagger.Client, sf *shipfile.Ship
 
 	outputDir := opts.OutputDir
 	if outputDir == "" {
-		outputDir = "build-output"
+		outputDir = filepath.Join("build-output", "standalone", sf.Name)
 	}
 
 	// Pull pristine source code
@@ -250,7 +250,7 @@ func BuildShipfile(ctx context.Context, client *dagger.Client, sf *shipfile.Ship
 		return nil, fmt.Errorf("artifact collection failed: %w", err)
 	}
 
-	ctr, matches, err := ExportArtifacts(ctx, ctr, files, srcDir, artifactPattern, outputDir)
+	ctr, matches, err := ExportArtifacts(ctx, ctr, files, srcDir, artifactPattern, outputDir, out)
 	if err != nil {
 		if opts.Interactive {
 			dropIntoShell(ctx, client, os.Stderr, ctr)
@@ -272,7 +272,7 @@ func BuildShipfile(ctx context.Context, client *dagger.Client, sf *shipfile.Ship
 // CWD), then the running executable as a last resort.
 func findContainerBinary(sfDir string) (string, error) {
 	names := []string{"bin/shipyard", "bin/shipyard-go"}
-	dirs := []string{sfDir, "."}
+	dirs := []string{sfDir, ".", "../shipyard"}
 	for _, name := range names {
 		for _, dir := range dirs {
 			p := filepath.Join(dir, name)
