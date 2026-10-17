@@ -69,6 +69,9 @@ func runPatch(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("load shipfile %s: %w", sfPath, err)
 	}
+	if err := sf.Validate(); err != nil {
+		return fmt.Errorf("shipfile %s is invalid: %w", sfPath, err)
+	}
 
 	fmt.Printf("[*] Patching: %s\n", absTarget)
 	if version != "" {
@@ -79,13 +82,10 @@ func runPatch(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	applied, err := sf.RunCodePatches(absTarget, version)
+	applied, err := sf.RunCodePatches(absTarget, version, os.Stdout)
 	if err != nil {
 		return fmt.Errorf("run code patches: %w", err)
 	}
-	for _, name := range applied {
-		fmt.Printf("[+] applied %s\n", name)
-	}
-	fmt.Printf("[+] Patch completed on %s\n", absTarget)
+	fmt.Printf("[+] Patch completed: %d function(s) applied\n", len(applied))
 	return nil
 }

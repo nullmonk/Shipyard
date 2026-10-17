@@ -5,7 +5,7 @@ class Shipfile(Builder):
     Name = "shipyard"
     Url = "https://github.com/micahjmartin/shipyard"
     VersionTags = "v*"
-    BaseImage = "golang:1.24-alpine"
+    BaseImage = "golang:1.26-alpine"
     ArtifactDir = "bin"
     Artifacts = r"^shipyard$"
 

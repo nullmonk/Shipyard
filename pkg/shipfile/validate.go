@@ -6,16 +6,18 @@ import (
 	"github.com/go-python/gpython/py"
 )
 
-// Validate calls the Python validate() method on the loaded Shipfile instance.
+// Validate calls shipyard.validate() on the loaded Shipfile instance.
+// This handles all subclass checks (Patcher, Builder, Tester) via isinstance,
+// and also works when Shipfile does not explicitly subclass shipyard.Shipfile.
 func (s *Shipfile) Validate() error {
 	if s.sfInst == nil {
 		return fmt.Errorf("shipfile instance not initialized")
 	}
-	meth, err := py.GetAttrString(s.sfInst, "validate")
+	validateFn, err := s.interp.GetShipyardAttr("validate")
 	if err != nil {
-		return fmt.Errorf("shipfile has no validate method: %w", err)
+		return fmt.Errorf("get shipyard.validate: %w", err)
 	}
-	if _, err := py.Call(meth, py.Tuple{}, nil); err != nil {
+	if _, err := py.Call(validateFn, py.Tuple{s.sfInst}, nil); err != nil {
 		return err
 	}
 	return nil

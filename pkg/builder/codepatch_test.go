@@ -2,6 +2,7 @@ package builder_test
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -68,7 +69,7 @@ void fill_default_options(ServerOptions *options) {
 	if err != nil {
 		t.Fatalf("shipfile.Load failed: %v", err)
 	}
-	if _, err := sf.RunCodePatches(tmpDir, "9.9p1"); err != nil {
+	if _, err := sf.RunCodePatches(tmpDir, "9.9p1", io.Discard); err != nil {
 		t.Fatalf("RunCodePatches failed: %v", err)
 	}
 

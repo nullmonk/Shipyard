@@ -17,7 +17,8 @@ type Engine struct {
 // Connect initializes a Dagger client connection.
 // If remote is specified (or SHIPYARD_DAGGER_REMOTE is set), the engine host
 // is redirected to that runner endpoint (e.g. tcp://host:1234, docker-container://name).
-func Connect(ctx context.Context, remote string) (*Engine, error) {
+// When verbose is true, Dagger engine logs are forwarded to stderr.
+func Connect(ctx context.Context, remote string, verbose bool) (*Engine, error) {
 	if remote == "" {
 		remote = os.Getenv("SHIPYARD_DAGGER_REMOTE")
 	}
@@ -28,7 +29,12 @@ func Connect(ctx context.Context, remote string) (*Engine, error) {
 		fmt.Fprintf(os.Stderr, "[*] Connecting to remote Dagger engine: %s\n", remote)
 	}
 
-	client, err := dagger.Connect(ctx, dagger.WithLogOutput(io.Discard))
+	logOutput := io.Discard
+	if verbose {
+		logOutput = os.Stderr
+	}
+
+	client, err := dagger.Connect(ctx, dagger.WithLogOutput(logOutput))
 	if err != nil {
 		return nil, fmt.Errorf("dagger connect: %w", err)
 	}

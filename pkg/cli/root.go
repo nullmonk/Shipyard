@@ -14,6 +14,7 @@ var (
 	globalShipfile string
 	globalRemote   string
 	globalPkgDir   string
+	globalVerbose  bool
 )
 
 // Root returns the host-side cobra root command.
@@ -33,6 +34,7 @@ func Root() *cobra.Command {
 	root.PersistentFlags().StringVarP(&globalShipfile, "shipfile", "f", defaultSF, "path to shipfile.py ($SHIPFILE)")
 	root.PersistentFlags().StringVar(&globalRemote, "remote", os.Getenv("SHIPYARD_REMOTE"), "remote Shipyard HTTP server URL ($SHIPYARD_REMOTE)")
 	root.PersistentFlags().StringVar(&globalPkgDir, "shipyard-pkg", os.Getenv("SHIPYARD_PKG"), "directory containing the shipyard Python package ($SHIPYARD_PKG)")
+	root.PersistentFlags().BoolVarP(&globalVerbose, "verbose", "V", false, "show detailed build output including Dagger logs")
 
 	root.AddCommand(newBuildCmd())
 	root.AddCommand(newPullCmd())

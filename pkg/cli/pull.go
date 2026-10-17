@@ -48,6 +48,9 @@ func runPull(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("load shipfile %s: %w", sfPath, err)
 	}
+	if err := sf.Validate(); err != nil {
+		return fmt.Errorf("shipfile %s is invalid: %w", sfPath, err)
+	}
 
 	absDest, err := filepath.Abs(destDir)
 	if err != nil {

@@ -1,6 +1,7 @@
 package shipfile_test
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -481,7 +482,7 @@ class Shipfile(Patcher):
 		t.Fatalf("ValidateString failed: %v", err)
 	}
 
-	applied, err := sfPatch.RunCodePatches(srcDir, "1.0.0", map[string]string{"BANNER": "custom_runtime_val"})
+	applied, err := sfPatch.RunCodePatches(srcDir, "1.0.0", io.Discard, map[string]string{"BANNER": "custom_runtime_val"})
 	if err != nil {
 		t.Fatalf("RunCodePatches failed: %v", err)
 	}

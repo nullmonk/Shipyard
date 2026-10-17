@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"dagger.io/dagger"
 	"shipyard/pkg/shipfile"
@@ -34,6 +36,19 @@ type BuildShipfileOpts struct {
 
 	// Interactive opens an interactive shell in the container.
 	Interactive bool
+
+	// Verbose enables detailed step-by-step progress output.
+	Verbose bool
+
+	// Output receives step labels and progress messages (default: os.Stdout).
+	Output io.Writer
+
+	// Stdout receives command stdout from the build step (default: io.Discard).
+	// Set this to capture or display command output in build services.
+	Stdout io.Writer
+
+	// Stderr receives command stderr from the build step (default: os.Stderr).
+	Stderr io.Writer
 }
 
 // BuildShipfile coordinates a generic (non-distro-package) build:
@@ -42,6 +57,18 @@ type BuildShipfileOpts struct {
 //  3. Call `shipyard build` which runs setup() and build() from the Shipfile.
 //  4. Export matching artifacts.
 func BuildShipfile(ctx context.Context, client *dagger.Client, sf *shipfile.Shipfile, opts BuildShipfileOpts) (*BuildResult, error) {
+	out := opts.Output
+	if out == nil {
+		out = os.Stdout
+	}
+	cmdOut := opts.Stdout
+	if cmdOut == nil {
+		cmdOut = io.Discard
+	}
+	cmdErr := opts.Stderr
+	if cmdErr == nil {
+		cmdErr = os.Stderr
+	}
 	image := opts.Image
 	if image == "" {
 		image = sf.BaseImage
@@ -64,24 +91,29 @@ func BuildShipfile(ctx context.Context, client *dagger.Client, sf *shipfile.Ship
 	}
 
 	// Pull pristine source code
-	fmt.Printf("[*] Pulling source code for %s...\n", sf.Name)
 	var srcCfg SourceConfig
 
 	localSource := filepath.Join(sf.Dir, "sources", sf.Name)
 	if fi, err := os.Stat(localSource); err == nil && fi.IsDir() {
-		// Pre-cloned source takes priority over everything.
 		srcCfg.LocalDir = localSource
+		fmt.Fprintf(out, "[*] Prepping source: %s (local: %s)\n", sf.Name, localSource)
 	} else if sf.Url != "" && opts.Version != "" {
-		// A specific version was requested — clone that tag/branch from the URL.
 		srcCfg.Url = sf.Url
 		srcCfg.Tag = opts.Version
+		fmt.Fprintf(out, "[*] Prepping source: %s @ %s\n", sf.Name, opts.Version)
+		if opts.Verbose {
+			fmt.Fprintf(out, "    Cloning %s\n", sf.Url)
+		}
 	} else if sf.Url != "" && sf.Branch != "" {
 		srcCfg.Url = sf.Url
 		srcCfg.Branch = sf.Branch
+		fmt.Fprintf(out, "[*] Prepping source: %s (branch: %s)\n", sf.Name, sf.Branch)
+		if opts.Verbose {
+			fmt.Fprintf(out, "    Cloning %s\n", sf.Url)
+		}
 	} else {
-		// No pre-cloned source and no version pinned: build from the shipfile directory.
-		// This is the typical dev workflow (current working tree, unpushed changes, etc.).
 		srcCfg.LocalDir = sf.Dir
+		fmt.Fprintf(out, "[*] Prepping source: %s (working tree)\n", sf.Name)
 	}
 
 	pristineSource, err := PullSource(ctx, client, srcCfg)
@@ -101,7 +133,10 @@ func BuildShipfile(ctx context.Context, client *dagger.Client, sf *shipfile.Ship
 		Exclude: []string{".git/", "__pycache__/", "build-output/", "sources/"},
 	})
 
-	fmt.Printf("[*] Setting up build container: %s\n", image)
+	fmt.Fprintf(out, "[*] Pulling container image: %s\n", image)
+	if opts.Verbose {
+		fmt.Fprintf(out, "    Injecting shipyard binary and shipfile directory\n")
+	}
 	ctr := client.Container().
 		From(image).
 		WithDirectory(workdir, pristineSource).
@@ -120,27 +155,35 @@ func BuildShipfile(ctx context.Context, client *dagger.Client, sf *shipfile.Ship
 	}
 
 	ctrPreBuild := ctr
-	fmt.Println("[*] Running shipyard build...")
-	buildCtr := ctr.WithExec([]string{"shipyard", "build"})
+	buildArgs := []string{"shipyard", "build"}
+	fmt.Fprintf(out, "[*] Building %s...\n", sf.Name)
+	fmt.Fprintf(out, "    $ %s\n", strings.Join(buildArgs, " "))
+	buildCtr := ctr.WithExec(buildArgs)
 
 	// Force execution and capture any build error with its output.
-	if _, err := buildCtr.Sync(ctx); err != nil {
+	if synced, err := buildCtr.Sync(ctx); err != nil {
 		var execErr *dagger.ExecError
 		if errors.As(err, &execErr) {
 			if execErr.Stdout != "" {
-				fmt.Print(execErr.Stdout)
+				fmt.Fprint(cmdOut, execErr.Stdout)
+				if cmdOut == io.Discard {
+					fmt.Fprint(out, execErr.Stdout)
+				}
 			}
 			if execErr.Stderr != "" {
-				fmt.Fprint(os.Stderr, execErr.Stderr)
+				fmt.Fprint(cmdErr, execErr.Stderr)
 			}
 		}
 		if opts.Interactive {
-			fmt.Printf("[!] Build failed: %v. Dropping into interactive shell...\n", err)
-			_, _ = ctrPreBuild.Terminal().Sync(ctx)
+			dropIntoShell(ctx, os.Stderr, ctrPreBuild)
 		}
 		return nil, fmt.Errorf("build failed: %w", err)
+	} else {
+		if stdout, err2 := synced.Stdout(ctx); err2 == nil && stdout != "" {
+			fmt.Fprint(cmdOut, stdout)
+		}
+		ctr = synced
 	}
-	ctr = buildCtr
 
 	artifactPattern := opts.ArtifactPattern
 	if artifactPattern == "" {
@@ -159,12 +202,15 @@ func BuildShipfile(ctx context.Context, client *dagger.Client, sf *shipfile.Ship
 		return nil, fmt.Errorf("create output directory %s: %w", outputDir, err)
 	}
 
-	fmt.Printf("[*] Inspecting artifacts in %s matching '%s'...\n", srcDir, artifactPattern)
+	if opts.Verbose {
+		fmt.Fprintf(out, "[*] Collecting artifacts from %s matching '%s'...\n", srcDir, artifactPattern)
+	} else {
+		fmt.Fprintln(out, "[*] Collecting artifacts...")
+	}
 	files, err := FindFiles(ctx, ctr, srcDir)
 	if err != nil {
 		if opts.Interactive {
-			fmt.Printf("[!] Artifact collection failed: %v. Dropping into interactive shell...\n", err)
-			_, _ = ctr.Terminal().Sync(ctx)
+			dropIntoShell(ctx, os.Stderr, ctr)
 		}
 		return nil, fmt.Errorf("artifact collection failed: %w", err)
 	}
@@ -172,15 +218,14 @@ func BuildShipfile(ctx context.Context, client *dagger.Client, sf *shipfile.Ship
 	ctr, matches, err := ExportArtifacts(ctx, ctr, files, srcDir, artifactPattern, outputDir)
 	if err != nil {
 		if opts.Interactive {
-			fmt.Printf("[!] Artifact export failed: %v. Dropping into interactive shell...\n", err)
-			_, _ = ctr.Terminal().Sync(ctx)
+			dropIntoShell(ctx, os.Stderr, ctr)
 		}
 		return nil, err
 	}
 
 	if opts.Interactive {
-		fmt.Println("[*] Build successful. Dropping into interactive shell...")
-		_, _ = ctr.Terminal().Sync(ctx)
+		fmt.Fprintln(os.Stderr, "[*] Build successful. Dropping into interactive shell...")
+		dropIntoShell(ctx, os.Stderr, ctr)
 	}
 
 	return &BuildResult{
@@ -188,6 +233,15 @@ func BuildShipfile(ctx context.Context, client *dagger.Client, sf *shipfile.Ship
 		OutputDir: outputDir,
 		Container: ctr,
 	}, nil
+}
+
+// dropIntoShell opens an interactive bash terminal in ctr. Always writes to w
+// (os.Stderr from callers) so the message is visible regardless of Output routing.
+func dropIntoShell(ctx context.Context, w io.Writer, ctr *dagger.Container) {
+	fmt.Fprintln(w, "[!] Dropping into interactive shell...")
+	if _, err := ctr.Terminal(dagger.ContainerTerminalOpts{Cmd: []string{"/bin/bash"}}).Sync(ctx); err != nil {
+		fmt.Fprintf(w, "[!] Could not open interactive shell: %v\n", err)
+	}
 }
 
 // findContainerBinary returns a path to a shipyard binary suitable for injection

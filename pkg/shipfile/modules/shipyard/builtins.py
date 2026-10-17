@@ -253,41 +253,8 @@ class Shipfile:
         return shipyard.get_variables(self if self is not None else Shipfile)
 
     def validate(self):
-        pkg = getattr(self, "PackageName", "") or getattr(self, "Package", "")
-        if not pkg:
-            pn = getattr(self, "package_name", None)
-            if callable(pn):
-                try:
-                    pkg = pn(None)
-                except Exception:
-                    pass
-            elif isinstance(pn, str):
-                pkg = pn
-        has_pkg = True if pkg else False
-
-        url = getattr(self, "Url", "") or getattr(self, "URL", "")
-        urls = getattr(self, "Urls", []) or getattr(self, "URLS", [])
-        has_url = (True if url else False) or (True if (urls and len(urls) > 0) else False)
-
-        if not (has_pkg or has_url):
-            raise ValueError(
-                "Shipfile must define at least a source: (PackageName or sf.package_name) or (Url || Urls) with good types (git repo, tar.gz, tgz, zip)"
-            )
-
-        if url and not _is_valid_source_url(url):
-            raise ValueError(
-                "invalid Url '{}': must be a git repo or archive (.tar.gz, .tgz, .zip)".format(url)
-            )
-
-        if urls:
-            for u in urls:
-                if not _is_valid_source_url(u):
-                    raise ValueError(
-                        "invalid Url in Urls '{}': must be a git repo or archive (.tar.gz, .tgz, .zip)".format(u)
-                    )
-
         import shipyard
-        shipyard.get_variables(self)
+        shipyard.validate(self)
 
 
 class Patcher(Shipfile):
@@ -296,22 +263,6 @@ class Patcher(Shipfile):
     def pre_patch(self, ctx=None): pass
     def post_patch(self, ctx=None): pass
 
-    def validate(self):
-        Shipfile.validate(self)
-        cls = self if isinstance(self, type) else type(self)
-        has_codepatch = False
-        for name in dir(cls):
-            val = getattr(cls, name, None)
-            if val is not None and hasattr(val, '__patch_files'):
-                has_codepatch = True
-                break
-        has_pre = getattr(cls, "pre_patch", None) is not Patcher.pre_patch
-        has_post = getattr(cls, "post_patch", None) is not Patcher.post_patch
-        if not (has_codepatch or has_pre or has_post):
-            raise ValueError(
-                "Patcher requires at least one codepatch OR a pre/post patch function"
-            )
-
 
 class Builder(Shipfile):
     BaseImage = ""
@@ -319,18 +270,94 @@ class Builder(Shipfile):
     def setup(self, ctx=None): pass
     def build(self, ctx=None): pass
 
-    def validate(self):
-        Shipfile.validate(self)
-        artifacts = getattr(self, "Artifacts", "")
+
+class Tester(Shipfile):
+    def pre_test(self, ctx=None): pass
+    def post_test(self, ctx=None): pass
+
+
+def validate(obj):
+    """Full validation for any Shipfile subclass. Checks base requirements first,
+    then each applicable subclass in order regardless of MRO."""
+    pkg = getattr(obj, "PackageName", "") or getattr(obj, "Package", "")
+    if not pkg:
+        pn = getattr(obj, "package_name", None)
+        if callable(pn):
+            try:
+                pkg = pn(None)
+            except Exception:
+                pass
+        elif isinstance(pn, str):
+            pkg = pn
+    has_pkg = True if pkg else False
+
+    url = getattr(obj, "Url", "") or getattr(obj, "URL", "")
+    urls = getattr(obj, "Urls", []) or getattr(obj, "URLS", [])
+    has_url = (True if url else False) or (True if (urls and len(urls) > 0) else False)
+
+    if not (has_pkg or has_url):
+        raise ValueError(
+            "Shipfile must define at least a source: (PackageName or sf.package_name) or (Url || Urls) with good types (git repo, tar.gz, tgz, zip)"
+        )
+
+    if url and not _is_valid_source_url(url):
+        raise ValueError(
+            "invalid Url '{}': must be a git repo or archive (.tar.gz, .tgz, .zip)".format(url)
+        )
+
+    if urls:
+        for u in urls:
+            if not _is_valid_source_url(u):
+                raise ValueError(
+                    "invalid Url in Urls '{}': must be a git repo or archive (.tar.gz, .tgz, .zip)".format(u)
+                )
+
+    import shipyard
+    shipyard.get_variables(obj)
+
+    cls = shipyard._get_class(obj)
+
+    if shipyard._is_subclass(cls, Patcher):
+        has_codepatch = False
+        for name in dir(cls):
+            val = getattr(cls, name, None)
+            if val is not None and hasattr(val, '__patch_files'):
+                has_codepatch = True
+                break
+        has_pre = shipyard._has_own_attr(cls, "pre_patch")
+        has_post = shipyard._has_own_attr(cls, "post_patch")
+        if not (has_codepatch or has_pre or has_post):
+            raise ValueError(
+                "Patcher requires at least one codepatch OR a pre/post patch function"
+            )
+
+    if shipyard._is_subclass(cls, Builder):
+        artifacts = getattr(obj, "Artifacts", "")
         if not artifacts:
             raise ValueError("Builder requires an artifacts regex")
         try:
             re.compile(artifacts)
         except Exception as e:
             raise ValueError("Builder Artifacts regex '{}' is invalid: {}".format(artifacts, e))
-
-        cls = self if isinstance(self, type) else type(self)
-        has_setup = getattr(cls, "setup", None) is not Builder.setup
-        has_build = getattr(cls, "build", None) is not Builder.build
+        has_setup = shipyard._has_own_attr(cls, "setup") or (True if getattr(obj, "Setup", "") else False)
+        has_build = shipyard._has_own_attr(cls, "build") or (True if getattr(obj, "Build", "") else False)
         if not (has_setup or has_build):
             raise ValueError("Builder requires setup or build function")
+
+    if shipyard._is_subclass(cls, Tester):
+        has_test = False
+        for name in dir(cls):
+            val = getattr(cls, name, None)
+            if val is not None and hasattr(val, '__test_name'):
+                has_test = True
+                break
+        has_pre = shipyard._has_own_attr(cls, "pre_test")
+        has_post = shipyard._has_own_attr(cls, "post_test")
+        if not (has_test or has_pre or has_post):
+            raise ValueError(
+                "Tester requires at least one @test function OR a pre/post test function"
+            )
+
+
+
+

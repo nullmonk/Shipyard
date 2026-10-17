@@ -1,7 +1,9 @@
 package shipfile_test
 
 import (
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"shipyard/pkg/shipfile"
@@ -235,4 +237,114 @@ class Shipfile(Patcher):
 		t.Errorf("expected GetVariable('NON_EXISTENT') to return false")
 	}
 }
+
+func TestRunCodePatchesSignatureAndErrors(t *testing.T) {
+	tmpDir := t.TempDir()
+	interp, err := shipfile.New(tmpDir)
+	if err != nil {
+		t.Fatalf("failed to create interpreter: %v", err)
+	}
+	defer interp.Close()
+
+	// Write a sample servconf.c
+	cFile := filepath.Join(tmpDir, "servconf.c")
+	if err := os.WriteFile(cFile, []byte("options->banner = NULL;\n"), 0644); err != nil {
+		t.Fatalf("failed to write servconf.c: %v", err)
+	}
+
+	src := `
+from shipyard import Patcher, Variable, CodePatch
+
+class Shipfile(Patcher):
+    Name = "openssh-test"
+    PackageName = "openssh-server"
+
+    Variables = [
+        Variable("BANNER", "Custom banner", "TEST_BANNER"),
+    ]
+
+    @CodePatch(r"servconf\.c$")
+    def banner(file, ctx):
+        b = ctx.variables["BANNER"]
+        file.replace("options->banner = NULL;", 'options->banner = "%s";' % b)
+`
+	sf, err := shipfile.ValidateString(src, interp)
+	if err != nil {
+		t.Fatalf("ValidateString error: %v", err)
+	}
+	sf.Dir = tmpDir
+
+	applied, err := sf.RunCodePatches(tmpDir, "9.0p1", os.Stderr, map[string]string{"BANNER": "CUSTOM_BANNER"})
+	if err != nil {
+		t.Fatalf("RunCodePatches failed: %v", err)
+	}
+	if len(applied) != 1 || applied[0] != "banner" {
+		t.Fatalf("expected 1 applied patch 'banner', got %+v", applied)
+	}
+
+	data, err := os.ReadFile(cFile)
+	if err != nil {
+		t.Fatalf("failed to read patched servconf.c: %v", err)
+	}
+	if string(data) != "options->banner = \"CUSTOM_BANNER\";\n" {
+		t.Errorf("unexpected patched content: %q", string(data))
+	}
+
+	// Also verify that if a CodePatch function raises an exception, we get the real exception
+	// and NOT AttributeError: "'Shipfile' has no attribute 'replace'"
+	errSrc := `
+from shipyard import Patcher, CodePatch
+
+class Shipfile(Patcher):
+    Name = "err-test"
+    PackageName = "err-pkg"
+
+    @CodePatch(r"servconf\.c$")
+    def banner(file, ctx):
+        val = ctx.variables["MISSING_KEY"]
+        file.replace("a", val)
+`
+	sfErr, err := shipfile.ValidateString(errSrc, interp)
+	if err != nil {
+		t.Fatalf("ValidateString error: %v", err)
+	}
+	sfErr.Dir = tmpDir
+
+	_, err = sfErr.RunCodePatches(tmpDir, "9.0p1", os.Stderr, nil)
+	if err == nil {
+		t.Fatalf("expected RunCodePatches to return an error when KeyError is raised")
+	}
+	if strings.Contains(err.Error(), "has no attribute 'replace'") {
+		t.Fatalf("RunCodePatches masked original error with Shipfile fallback error: %v", err)
+	}
+	if !strings.Contains(err.Error(), "MISSING_KEY") {
+		t.Errorf("expected KeyError for MISSING_KEY in error message, got: %v", err)
+	}
+
+	// Test examples/openssh/shipfile.py against mock servconf.c with default variable
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	opensshSf, err := shipfile.LoadDefault(filepath.Join(root, "examples/openssh/shipfile.py"), root)
+	if err != nil {
+		t.Fatalf("LoadDefault openssh failed: %v", err)
+	}
+	unpatchedServconf := "void fill_default_options(ServerOptions *options) {\n\tif (options->version_addendum == NULL)\n\t\toptions->version_addendum = xstrdup(\"\");\n}\n"
+	if err := os.WriteFile(cFile, []byte(unpatchedServconf), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := opensshSf.RunCodePatches(tmpDir, "9.9p1", os.Stderr); err != nil {
+		t.Fatalf("openssh RunCodePatches failed: %v", err)
+	}
+	patched, err := os.ReadFile(cFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(patched), `options->version_addendum = xstrdup("opensource is good");`) {
+		t.Errorf("expected openssh banner patch to substitute default __BANNER__, got: %s", string(patched))
+	}
+}
+
+
 

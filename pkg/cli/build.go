@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -68,9 +69,8 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("load shipfile %s: %w", sfPath, err)
 	}
-
 	if err := sf.Validate(); err != nil {
-		return fmt.Errorf("validate shipfile %s: %w", sfPath, err)
+		return fmt.Errorf("shipfile %s is invalid: %w", sfPath, err)
 	}
 
 	version := buildVersion
@@ -79,7 +79,10 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	}
 
 	if buildLocal {
-		return runLocalBuild(sf, interp, version, buildOutput, buildArtifacts)
+		if err := runLocalBuild(sf, interp, version, buildOutput, buildArtifacts); err != nil {
+			return err
+		}
+		return runTests(sf, version)
 	}
 
 	if buildPackageImage != "" {
@@ -93,11 +96,19 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	}
 
 	ctx := context.Background()
-	engine, err := builder.Connect(ctx, globalRemote)
+	engine, err := builder.Connect(ctx, globalRemote, globalVerbose)
 	if err != nil {
 		return fmt.Errorf("connect to Dagger: %w", err)
 	}
 	defer engine.Close()
+
+	// In-container command stdout always goes to the terminal.
+	// Setup/progress messages (image pull, deps install, etc.) are suppressed unless --verbose.
+	// Build services redirect by setting Output/Stdout/Stderr on the opts directly.
+	progressOut := io.Writer(io.Discard)
+	if globalVerbose {
+		progressOut = os.Stdout
+	}
 
 	if buildPackageImage != "" {
 		outDir := buildOutput
@@ -111,12 +122,16 @@ func runBuild(cmd *cobra.Command, args []string) error {
 			ArtifactPattern: buildArtifacts,
 			OutputDir:       outDir,
 			Interactive:     buildInteractive,
+			Verbose:         globalVerbose,
+			Output:          progressOut,
+			Stdout:          os.Stdout,
+			Stderr:          os.Stderr,
 		})
 		if err != nil {
 			return fmt.Errorf("package build failed: %w", err)
 		}
 		fmt.Printf("[+] Package build completed: %d artifacts in %s\n", len(res.Artifacts), res.OutputDir)
-		return nil
+		return runTests(sf, version)
 	}
 
 	outDir := buildOutput
@@ -129,11 +144,44 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		ArtifactPattern: buildArtifacts,
 		OutputDir:       outDir,
 		Interactive:     buildInteractive,
+		Verbose:         globalVerbose,
+		Output:          progressOut,
+		Stdout:          os.Stdout,
+		Stderr:          os.Stderr,
 	})
 	if err != nil {
 		return fmt.Errorf("build failed: %w", err)
 	}
 	fmt.Printf("[+] Build completed: %d artifacts in %s\n", len(res.Artifacts), res.OutputDir)
+	return runTests(sf, version)
+}
+
+func runTests(sf *shipfile.Shipfile, version string) error {
+	if !sf.IsTest() {
+		return nil
+	}
+	fmt.Println("[*] Running tests...")
+	results, err := sf.RunTests(shipfile.RunContext{Version: version})
+	if err != nil {
+		return fmt.Errorf("test runner failed: %w", err)
+	}
+	failed := 0
+	for _, r := range results {
+		label := r.Name
+		if label == "" {
+			label = "(unnamed)"
+		}
+		if r.Passed {
+			fmt.Printf("[+] PASS  %s\n", label)
+		} else {
+			fmt.Printf("[-] FAIL  %s: %s\n", label, r.Error)
+			failed++
+		}
+	}
+	if failed > 0 {
+		return fmt.Errorf("%d test(s) failed", failed)
+	}
+	fmt.Printf("[+] All %d test(s) passed\n", len(results))
 	return nil
 }
 

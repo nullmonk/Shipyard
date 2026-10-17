@@ -71,13 +71,10 @@ func runPatch(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	applied, err := sf.RunCodePatches(absTarget, version)
+	applied, err := sf.RunCodePatches(absTarget, version, os.Stdout)
 	if err != nil {
 		return fmt.Errorf("run code patches: %w", err)
 	}
-	for _, name := range applied {
-		fmt.Printf("[+] applied %s\n", name)
-	}
-	fmt.Printf("[+] Patch completed on %s\n", absTarget)
+	fmt.Printf("[+] Patch completed: %d function(s) applied\n", len(applied))
 	return nil
 }

@@ -100,7 +100,9 @@ func getShipfilePath() (string, error) {
 }
 
 // shellIn runs a shell command in dir, streaming stdout/stderr.
+// It prints the command before running it so callers appear in build logs.
 func shellIn(dir, command string) error {
+	fmt.Printf("    $ %s\n", command)
 	cmd := exec.Command("/bin/sh", "-c", command)
 	cmd.Dir = dir
 	cmd.Stdout = os.Stdout

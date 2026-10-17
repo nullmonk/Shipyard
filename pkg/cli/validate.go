@@ -27,7 +27,7 @@ func newValidateCmd() *cobra.Command {
 				return fmt.Errorf("load shipfile %s: %w", sfPath, err)
 			}
 			if err := sf.Validate(); err != nil {
-				return fmt.Errorf("shipfile %s is invalid:\n%w", sfPath, err)
+				return fmt.Errorf("shipfile %s is invalid: %w", sfPath, err)
 			}
 			fmt.Printf("Shipfile %s is valid.\n", sfPath)
 			return nil

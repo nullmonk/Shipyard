@@ -81,10 +81,15 @@ func applyDebianPatch(topDir, sourceDir string, hasPatch bool) error {
 	if !hasPatch {
 		return nil
 	}
-	if err := shellIn(topDir, "quilt import /tmp/shipyard.patch"); err != nil {
+	// Both commands must run from sourceDir with QUILT_PATCHES=debian/patches.
+	// Running import from topDir wrote into /tmp/build/patches/series while push
+	// read debian/patches/series — two separate quilt states, so push never saw
+	// the imported patch and reported "fully applied" (exit 2).
+	const quiltEnv = "QUILT_PATCHES=debian/patches"
+	if err := shellIn(sourceDir, quiltEnv+" quilt import /tmp/shipyard.patch"); err != nil {
 		return fmt.Errorf("quilt import: %w", err)
 	}
-	if err := shellIn(sourceDir, "quilt push && quilt refresh"); err != nil {
+	if err := shellIn(sourceDir, quiltEnv+" quilt push && "+quiltEnv+" quilt refresh"); err != nil {
 		return fmt.Errorf("quilt push: %w", err)
 	}
 	return nil

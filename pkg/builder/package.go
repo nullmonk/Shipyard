@@ -2,7 +2,9 @@ package builder
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,6 +30,19 @@ type BuildPackageOpts struct {
 
 	// Interactive drops into an interactive shell upon build completion or failure.
 	Interactive bool
+
+	// Verbose enables detailed step-by-step progress output.
+	Verbose bool
+
+	// Output receives step labels and progress messages (default: os.Stdout).
+	Output io.Writer
+
+	// Stdout receives command stdout from each build step (default: io.Discard).
+	// Set this to capture or display command output in build services.
+	Stdout io.Writer
+
+	// Stderr receives command stderr from each build step (default: os.Stderr).
+	Stderr io.Writer
 }
 
 // SnapshotSource commits the pristine unpacked source so the in-container build
@@ -59,6 +74,18 @@ func GeneratePatch(ctx context.Context, ctr *dagger.Container, sourceDir string)
 //  5. Calls `shipyard build` which generates the patch, applies it via distro tools, and builds.
 //  6. Extracts the matching package artifacts to the host.
 func BuildPackage(ctx context.Context, client *dagger.Client, sf *shipfile.Shipfile, image string, opts BuildPackageOpts) (*BuildResult, error) {
+	out := opts.Output
+	if out == nil {
+		out = os.Stdout
+	}
+	cmdOut := opts.Stdout
+	if cmdOut == nil {
+		cmdOut = io.Discard
+	}
+	cmdErr := opts.Stderr
+	if cmdErr == nil {
+		cmdErr = os.Stderr
+	}
 	driver, err := drivers.GetDriver(image)
 	if err != nil {
 		return nil, err
@@ -75,17 +102,22 @@ func BuildPackage(ctx context.Context, client *dagger.Client, sf *shipfile.Shipf
 		return nil, fmt.Errorf("package name must be specified or defined in Shipfile (PackageName / Name)")
 	}
 
-	fmt.Printf("[*] Starting package build for %s on %s\n", pkgName, image)
+	fmt.Fprintf(out, "[*] Pulling container image: %s\n", image)
+	if opts.Verbose {
+		fmt.Fprintf(out, "    Package: %s  Driver: %s\n", pkgName, driver.DistroName())
+	}
 
 	// Step 1: Distro setup and build deps
 	ctr := client.Container().From(image)
 	ctr = driver.Setup(ctr)
+	fmt.Fprintf(out, "[*] Installing build dependencies for %s...\n", pkgName)
 	ctr = driver.InstallBuildDeps(ctr, pkgName)
 
 	sourceDir, err := driver.GetSourceDir(ctx, ctr, pkgName)
 	if err != nil {
 		return nil, fmt.Errorf("get source directory: %w", err)
 	}
+	fmt.Fprintf(out, "    Source: %s\n", sourceDir)
 
 	// Step 2: Copy pristine source for later diff generation and interactive reset.
 	ctr = ctr.
@@ -100,17 +132,23 @@ func BuildPackage(ctx context.Context, client *dagger.Client, sf *shipfile.Shipf
 		distroVersion = ""
 	}
 	distroVersion = strings.TrimSpace(distroVersion)
+	if distroVersion != "" {
+		fmt.Fprintf(out, "    Distro: %s %s\n", driver.DistroName(), distroVersion)
+	}
 
 	// Step 4: Inject self binary and shipfile directory
-	self, err := os.Executable()
+	self, err := findContainerBinary(sf.Dir)
 	if err != nil {
-		return nil, fmt.Errorf("resolve executable path: %w", err)
+		return nil, err
 	}
 	selfFile := client.Host().File(self)
 	shipfileDir := client.Host().Directory(sf.Dir, dagger.HostDirectoryOpts{
 		Exclude: []string{".git/", "__pycache__/", "build-output/", "sources/"},
 	})
 
+	if opts.Verbose {
+		fmt.Fprintln(out, "[*] Injecting shipyard binary and shipfile directory...")
+	}
 	ctr = ctr.
 		WithFile("/usr/local/bin/shipyard", selfFile, dagger.ContainerWithFileOpts{Permissions: 0o755}).
 		WithDirectory("/work/shipyard", shipfileDir)
@@ -134,16 +172,64 @@ func BuildPackage(ctx context.Context, client *dagger.Client, sf *shipfile.Shipf
 		ctr = ctr.WithEnvVariable(k, v)
 	}
 
-	// Step 6: patch → apply → build
+	// Step 6: patch → apply → build (each step is forced-sync so errors surface immediately)
 	ctrPreBuild := ctr
-	fmt.Println("[*] Running shipyard patch...")
-	ctr = ctr.WithExec([]string{"shipyard", "patch"})
 
-	fmt.Println("[*] Running shipyard apply...")
-	ctr = ctr.WithExec([]string{"shipyard", "apply"})
+	runStep := func(label string, args []string) (*dagger.Container, error) {
+		fmt.Fprintln(out, label)
+		fmt.Fprintf(out, "    $ %s\n", strings.Join(args, " "))
+		next := ctr.WithExec(args)
+		synced, err := next.Sync(ctx)
+		if err != nil {
+			var execErr *dagger.ExecError
+			if errors.As(err, &execErr) {
+				if execErr.Stdout != "" {
+					// Write to cmdOut so services capture it, and always echo to out so
+					// the operator sees it even when cmdOut is discarded.
+					fmt.Fprint(cmdOut, execErr.Stdout)
+					if cmdOut == io.Discard {
+						fmt.Fprint(out, execErr.Stdout)
+					}
+				}
+				if execErr.Stderr != "" {
+					fmt.Fprint(cmdErr, execErr.Stderr)
+				}
+			}
+			return nil, err
+		}
+		// On success, write captured output to the configured writers.
+		if stdout, err2 := synced.Stdout(ctx); err2 == nil && stdout != "" {
+			fmt.Fprint(cmdOut, stdout)
+		}
+		return synced, nil
+	}
 
-	fmt.Println("[*] Running shipyard build...")
-	ctr = ctr.WithExec([]string{"shipyard", "build"})
+	if synced, err := runStep("[*] Patching source code...", []string{"shipyard", "patch"}); err != nil {
+		if opts.Interactive {
+			dropIntoShell(ctx, os.Stderr, ctrPreBuild)
+		}
+		return nil, fmt.Errorf("patch failed: %w", err)
+	} else {
+		ctr = synced
+	}
+
+	if synced, err := runStep("[*] Applying patches...", []string{"shipyard", "apply"}); err != nil {
+		if opts.Interactive {
+			dropIntoShell(ctx, os.Stderr, ctr)
+		}
+		return nil, fmt.Errorf("apply failed: %w", err)
+	} else {
+		ctr = synced
+	}
+
+	if synced, err := runStep(fmt.Sprintf("[*] Building package: %s...", pkgName), []string{"shipyard", "build"}); err != nil {
+		if opts.Interactive {
+			dropIntoShell(ctx, os.Stderr, ctr)
+		}
+		return nil, fmt.Errorf("build failed: %w", err)
+	} else {
+		ctr = synced
+	}
 
 	// Step 7: Extract artifacts
 	artifactPattern := opts.ArtifactPattern
@@ -165,32 +251,30 @@ func BuildPackage(ctx context.Context, client *dagger.Client, sf *shipfile.Shipf
 		return nil, fmt.Errorf("create output directory %s: %w", outputDir, err)
 	}
 
-	fmt.Printf("[*] Inspecting artifacts in %s matching '%s'...\n", srcDir, artifactPattern)
+	if opts.Verbose {
+		fmt.Fprintf(out, "[*] Collecting artifacts from %s matching '%s'...\n", srcDir, artifactPattern)
+	} else {
+		fmt.Fprintln(out, "[*] Collecting artifacts...")
+	}
 	files, err := FindFiles(ctx, ctr, srcDir)
 	if err != nil {
 		if opts.Interactive {
-			fmt.Printf("[!] Build failed: %v. Dropping into interactive shell...\n", err)
-			target := ctrPreBuild
-			if target == nil {
-				target = ctr
-			}
-			_, _ = target.Terminal().Sync(ctx)
+			dropIntoShell(ctx, os.Stderr, ctr)
 		}
-		return nil, fmt.Errorf("package build failed: %w", err)
+		return nil, fmt.Errorf("artifact collection failed: %w", err)
 	}
 
 	ctr, matches, err := ExportArtifacts(ctx, ctr, files, srcDir, artifactPattern, outputDir)
 	if err != nil {
 		if opts.Interactive {
-			fmt.Printf("[!] Artifact export failed: %v. Dropping into interactive shell...\n", err)
-			_, _ = ctr.Terminal().Sync(ctx)
+			dropIntoShell(ctx, os.Stderr, ctr)
 		}
 		return nil, err
 	}
 
 	if opts.Interactive {
-		fmt.Println("[*] Build successful. Dropping into interactive shell...")
-		_, _ = ctr.Terminal().Sync(ctx)
+		fmt.Fprintln(os.Stderr, "[*] Build successful. Dropping into interactive shell...")
+		dropIntoShell(ctx, os.Stderr, ctr)
 	}
 
 	return &BuildResult{

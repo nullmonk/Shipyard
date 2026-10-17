@@ -1,9 +1,15 @@
 module shipyard
 
-go 1.27.2
+go 1.26.1
 
 require (
-	dagger.io/dagger v0.21.10 // indirect
+	dagger.io/dagger v0.21.10
+	github.com/go-python/gpython v0.2.0
+	github.com/spf13/cobra v1.10.2
+)
+
+
+require (
 	github.com/99designs/gqlgen v0.17.89 // indirect
 	github.com/Khan/genqlient v0.8.1 // indirect
 	github.com/adrg/xdg v0.5.3 // indirect
@@ -11,15 +17,10 @@ require (
 	github.com/dagger/querybuilder v0.0.0-20260402040506-574a5e81cb59 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
-	github.com/go-python/gpython v0.2.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
-	github.com/mattn/go-runewidth v0.0.13 // indirect
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
-	github.com/peterh/liner v1.2.2 // indirect
-	github.com/rivo/uniseg v0.3.4 // indirect
 	github.com/sosodev/duration v1.4.0 // indirect
-	github.com/spf13/cobra v1.10.2 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
 	github.com/vektah/gqlparser/v2 v2.5.32 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
@@ -28,4 +29,5 @@ require (
 	go.opentelemetry.io/otel/trace v1.41.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.42.0 // indirect
+	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
