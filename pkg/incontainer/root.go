@@ -68,7 +68,9 @@ KEY ENVIRONMENT VARIABLES:
 	root.AddCommand(newPatchCmd())
 	root.AddCommand(newApplyCmd())
 	root.AddCommand(newBuildCmd())
+	root.AddCommand(newTestCmd())
 	root.AddCommand(newResetCmd())
+	root.AddCommand(newShellCmd())
 
 	return root
 }

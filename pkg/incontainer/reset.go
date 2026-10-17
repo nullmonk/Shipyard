@@ -3,6 +3,7 @@ package incontainer
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
@@ -50,6 +51,9 @@ func resetPackageSource(distro, sourceDir string) error {
 }
 
 func resetGenericSource(sourceDir string) error {
+	if _, err := exec.LookPath("git"); err != nil {
+		return fmt.Errorf("git is not installed; git is required to reset source")
+	}
 	if _, err := os.Stat(filepath.Join(sourceDir, ".git")); err != nil {
 		return fmt.Errorf("no git snapshot in %s; start the session with --interactive to enable reset", sourceDir)
 	}

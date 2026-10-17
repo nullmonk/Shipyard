@@ -23,6 +23,8 @@ var (
 	buildArtifacts    string
 	buildInteractive  bool
 	buildLocal        bool
+	buildCopy         string
+	buildNoTest       bool
 )
 
 func newBuildCmd() *cobra.Command {
@@ -34,7 +36,16 @@ func newBuildCmd() *cobra.Command {
 Without --package: runs a generic build in a container (BaseImage).
 With --package <image>: spins up a distro container to create an OS package.
 With --local: runs setup() and build() directly on the host without Dagger.`,
-		Args: cobra.MaximumNArgs(1),
+		Args: func(cmd *cobra.Command, args []string) error {
+			max := 1
+			if cmd.Flags().Changed("copy") {
+				max = 2
+			}
+			if len(args) > max {
+				return fmt.Errorf("accepts at most %d arg(s), received %d", max, len(args))
+			}
+			return nil
+		},
 		RunE: runBuild,
 	}
 	cmd.Flags().BoolVarP(&buildLocal, "local", "l", false, "run setup() and build() directly on host without Dagger")
@@ -44,13 +55,47 @@ With --local: runs setup() and build() directly on the host without Dagger.`,
 	cmd.Flags().StringVarP(&buildVersion, "version", "v", "", "target version/tag to build ($SHIPYARD_VERSION)")
 	cmd.Flags().StringVarP(&buildOutput, "output", "o", "", "output directory for artifacts (default: build-output)")
 	cmd.Flags().StringVarP(&buildArtifacts, "artifacts", "a", "", "artifact regex pattern")
-	cmd.Flags().BoolVar(&buildInteractive, "interactive", false, "drop into interactive container shell on finish/error")
+	cmd.Flags().BoolVar(&buildInteractive, "interactive", false, "drop into interactive container shell on error")
+	cmd.Flags().StringVarP(&buildCopy, "copy", "c", "", "copy local directory (or specified path) into container instead of git")
+	cmd.Flags().Lookup("copy").NoOptDefVal = "."
+	cmd.Flags().BoolVar(&buildNoTest, "no-test", false, "skip running tests defined in shipfile")
 	return cmd
 }
 
 func runBuild(cmd *cobra.Command, args []string) error {
 	target := ""
-	if len(args) > 0 {
+	copyDir := ""
+
+	if cmd.Flags().Changed("copy") {
+		copyDir = buildCopy
+		if copyDir == "." {
+			if len(args) == 2 {
+				copyDir = args[0]
+				target = args[1]
+			} else if len(args) == 1 {
+				abs, err := filepath.Abs(args[0])
+				if err == nil {
+					fi, statErr := os.Stat(abs)
+					if statErr == nil && fi.IsDir() {
+						candidate := filepath.Join(abs, "shipfile.py")
+						if _, err := os.Stat(candidate); err != nil {
+							copyDir = args[0]
+						} else {
+							target = args[0]
+						}
+					} else {
+						target = args[0]
+					}
+				} else {
+					target = args[0]
+				}
+			}
+		} else {
+			if len(args) > 0 {
+				target = args[0]
+			}
+		}
+	} else if len(args) > 0 {
 		target = args[0]
 	}
 
@@ -71,6 +116,22 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	}
 	if err := sf.Validate(); err != nil {
 		return fmt.Errorf("shipfile %s is invalid: %w", sfPath, err)
+	}
+
+	if cmd.Flags().Changed("copy") {
+		if copyDir == "." || copyDir == "" {
+			copyDir = sf.Dir
+		} else {
+			absCopy, err := filepath.Abs(copyDir)
+			if err != nil {
+				return fmt.Errorf("resolve copy path %s: %w", copyDir, err)
+			}
+			fi, err := os.Stat(absCopy)
+			if err != nil || !fi.IsDir() {
+				return fmt.Errorf("copy source directory does not exist: %s", absCopy)
+			}
+			copyDir = absCopy
+		}
 	}
 
 	version := buildVersion
@@ -122,16 +183,18 @@ func runBuild(cmd *cobra.Command, args []string) error {
 			ArtifactPattern: buildArtifacts,
 			OutputDir:       outDir,
 			Interactive:     buildInteractive,
+			NoTest:          buildNoTest,
 			Verbose:         globalVerbose,
 			Output:          progressOut,
 			Stdout:          os.Stdout,
 			Stderr:          os.Stderr,
+			Copy:            copyDir,
 		})
 		if err != nil {
 			return fmt.Errorf("package build failed: %w", err)
 		}
 		fmt.Printf("[+] Package build completed: %d artifacts in %s\n", len(res.Artifacts), res.OutputDir)
-		return runTests(sf, version)
+		return nil
 	}
 
 	outDir := buildOutput
@@ -144,20 +207,22 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		ArtifactPattern: buildArtifacts,
 		OutputDir:       outDir,
 		Interactive:     buildInteractive,
+		NoTest:          buildNoTest,
 		Verbose:         globalVerbose,
 		Output:          progressOut,
 		Stdout:          os.Stdout,
 		Stderr:          os.Stderr,
+		Copy:            copyDir,
 	})
 	if err != nil {
 		return fmt.Errorf("build failed: %w", err)
 	}
 	fmt.Printf("[+] Build completed: %d artifacts in %s\n", len(res.Artifacts), res.OutputDir)
-	return runTests(sf, version)
+	return nil
 }
 
 func runTests(sf *shipfile.Shipfile, version string) error {
-	if !sf.IsTest() {
+	if !sf.IsTest() || buildNoTest {
 		return nil
 	}
 	fmt.Println("[*] Running tests...")

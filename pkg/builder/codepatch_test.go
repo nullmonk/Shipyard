@@ -17,7 +17,7 @@ func TestOpenSSHCodePatchApplication(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	engine, err := builder.Connect(ctx, "")
+	engine, err := builder.Connect(ctx, "", false)
 	if err != nil {
 		t.Skipf("skipping test: Dagger connection failed: %v", err)
 	}
@@ -44,9 +44,19 @@ void fill_default_options(ServerOptions *options) {
 		t.Fatal(err)
 	}
 
+	origDir, err := os.MkdirTemp("", "shipyard-openssh-orig-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(origDir)
+
+	if err := os.WriteFile(filepath.Join(origDir, "servconf.c"), []byte(unpatchedServconf), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
 	// Pull source into Dagger
 	srcDir, err := builder.PullSource(ctx, client, builder.SourceConfig{
-		LocalDir: tmpDir,
+		LocalDir: origDir,
 	})
 	if err != nil {
 		t.Fatalf("PullSource failed: %v", err)

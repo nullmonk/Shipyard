@@ -34,8 +34,14 @@ type BuildShipfileOpts struct {
 	// OutputDir overrides the destination directory for exported artifacts.
 	OutputDir string
 
+	// Copy specifies a local directory to copy into the container as source instead of git.
+	Copy string
+
 	// Interactive opens an interactive shell in the container.
 	Interactive bool
+
+	// NoTest skips running @test functions after the build.
+	NoTest bool
 
 	// Verbose enables detailed step-by-step progress output.
 	Verbose bool
@@ -93,27 +99,32 @@ func BuildShipfile(ctx context.Context, client *dagger.Client, sf *shipfile.Ship
 	// Pull pristine source code
 	var srcCfg SourceConfig
 
-	localSource := filepath.Join(sf.Dir, "sources", sf.Name)
-	if fi, err := os.Stat(localSource); err == nil && fi.IsDir() {
-		srcCfg.LocalDir = localSource
-		fmt.Fprintf(out, "[*] Prepping source: %s (local: %s)\n", sf.Name, localSource)
-	} else if sf.Url != "" && opts.Version != "" {
-		srcCfg.Url = sf.Url
-		srcCfg.Tag = opts.Version
-		fmt.Fprintf(out, "[*] Prepping source: %s @ %s\n", sf.Name, opts.Version)
-		if opts.Verbose {
-			fmt.Fprintf(out, "    Cloning %s\n", sf.Url)
-		}
-	} else if sf.Url != "" && sf.Branch != "" {
-		srcCfg.Url = sf.Url
-		srcCfg.Branch = sf.Branch
-		fmt.Fprintf(out, "[*] Prepping source: %s (branch: %s)\n", sf.Name, sf.Branch)
-		if opts.Verbose {
-			fmt.Fprintf(out, "    Cloning %s\n", sf.Url)
-		}
+	if opts.Copy != "" {
+		srcCfg.LocalDir = opts.Copy
+		fmt.Fprintf(out, "[*] Prepping source: %s (copy: %s)\n", sf.Name, opts.Copy)
 	} else {
-		srcCfg.LocalDir = sf.Dir
-		fmt.Fprintf(out, "[*] Prepping source: %s (working tree)\n", sf.Name)
+		localSource := filepath.Join(sf.Dir, "sources", sf.Name)
+		if fi, err := os.Stat(localSource); err == nil && fi.IsDir() {
+			srcCfg.LocalDir = localSource
+			fmt.Fprintf(out, "[*] Prepping source: %s (local: %s)\n", sf.Name, localSource)
+		} else if sf.Url != "" && opts.Version != "" {
+			srcCfg.Url = sf.Url
+			srcCfg.Tag = opts.Version
+			fmt.Fprintf(out, "[*] Prepping source: %s @ %s\n", sf.Name, opts.Version)
+			if opts.Verbose {
+				fmt.Fprintf(out, "    Cloning %s\n", sf.Url)
+			}
+		} else if sf.Url != "" && sf.Branch != "" {
+			srcCfg.Url = sf.Url
+			srcCfg.Branch = sf.Branch
+			fmt.Fprintf(out, "[*] Prepping source: %s (branch: %s)\n", sf.Name, sf.Branch)
+			if opts.Verbose {
+				fmt.Fprintf(out, "    Cloning %s\n", sf.Url)
+			}
+		} else {
+			srcCfg.LocalDir = sf.Dir
+			fmt.Fprintf(out, "[*] Prepping source: %s (working tree)\n", sf.Name)
+		}
 	}
 
 	pristineSource, err := PullSource(ctx, client, srcCfg)
@@ -154,35 +165,59 @@ func BuildShipfile(ctx context.Context, client *dagger.Client, sf *shipfile.Ship
 		ctr = SnapshotSource(ctr, workdir)
 	}
 
-	ctrPreBuild := ctr
-	buildArgs := []string{"shipyard", "build"}
-	fmt.Fprintf(out, "[*] Building %s...\n", sf.Name)
-	fmt.Fprintf(out, "    $ %s\n", strings.Join(buildArgs, " "))
-	buildCtr := ctr.WithExec(buildArgs)
-
-	// Force execution and capture any build error with its output.
-	if synced, err := buildCtr.Sync(ctx); err != nil {
-		var execErr *dagger.ExecError
-		if errors.As(err, &execErr) {
-			if execErr.Stdout != "" {
-				fmt.Fprint(cmdOut, execErr.Stdout)
-				if cmdOut == io.Discard {
-					fmt.Fprint(out, execErr.Stdout)
+	runStep := func(label string, args []string) (*dagger.Container, error) {
+		fmt.Fprintln(out, label)
+		fmt.Fprintf(out, "    $ %s\n", strings.Join(args, " "))
+		next := ctr.WithExec(args)
+		synced, err := next.Sync(ctx)
+		if err != nil {
+			var execErr *dagger.ExecError
+			if errors.As(err, &execErr) {
+				if execErr.Stdout != "" {
+					outStr := execErr.Stdout
+					if !strings.HasSuffix(outStr, "\n") {
+						outStr += "\n"
+					}
+					fmt.Fprint(cmdOut, outStr)
+					if cmdOut == io.Discard {
+						fmt.Fprint(out, outStr)
+					}
+				}
+				if execErr.Stderr != "" {
+					errStr := execErr.Stderr
+					if !strings.HasSuffix(errStr, "\n") {
+						errStr += "\n"
+					}
+					fmt.Fprint(cmdErr, errStr)
 				}
 			}
-			if execErr.Stderr != "" {
-				fmt.Fprint(cmdErr, execErr.Stderr)
-			}
+			return nil, err
 		}
-		if opts.Interactive {
-			dropIntoShell(ctx, os.Stderr, ctrPreBuild)
-		}
-		return nil, fmt.Errorf("build failed: %w", err)
-	} else {
 		if stdout, err2 := synced.Stdout(ctx); err2 == nil && stdout != "" {
 			fmt.Fprint(cmdOut, stdout)
 		}
+		return synced, nil
+	}
+
+	ctrPreBuild := ctr
+	if synced, err := runStep(fmt.Sprintf("[*] Building %s...", sf.Name), []string{"shipyard", "build"}); err != nil {
+		if opts.Interactive {
+			dropIntoShell(ctx, client, os.Stderr, ctrPreBuild)
+		}
+		return nil, fmt.Errorf("build failed: %w", err)
+	} else {
 		ctr = synced
+	}
+
+	if sf.IsTest() && !opts.NoTest {
+		if synced, err := runStep("[*] Running tests...", []string{"shipyard", "test"}); err != nil {
+			if opts.Interactive {
+				dropIntoShell(ctx, client, os.Stderr, ctr)
+			}
+			return nil, fmt.Errorf("tests failed: %w", err)
+		} else {
+			ctr = synced
+		}
 	}
 
 	artifactPattern := opts.ArtifactPattern
@@ -210,7 +245,7 @@ func BuildShipfile(ctx context.Context, client *dagger.Client, sf *shipfile.Ship
 	files, err := FindFiles(ctx, ctr, srcDir)
 	if err != nil {
 		if opts.Interactive {
-			dropIntoShell(ctx, os.Stderr, ctr)
+			dropIntoShell(ctx, client, os.Stderr, ctr)
 		}
 		return nil, fmt.Errorf("artifact collection failed: %w", err)
 	}
@@ -218,14 +253,9 @@ func BuildShipfile(ctx context.Context, client *dagger.Client, sf *shipfile.Ship
 	ctr, matches, err := ExportArtifacts(ctx, ctr, files, srcDir, artifactPattern, outputDir)
 	if err != nil {
 		if opts.Interactive {
-			dropIntoShell(ctx, os.Stderr, ctr)
+			dropIntoShell(ctx, client, os.Stderr, ctr)
 		}
 		return nil, err
-	}
-
-	if opts.Interactive {
-		fmt.Fprintln(os.Stderr, "[*] Build successful. Dropping into interactive shell...")
-		dropIntoShell(ctx, os.Stderr, ctr)
 	}
 
 	return &BuildResult{
@@ -233,15 +263,6 @@ func BuildShipfile(ctx context.Context, client *dagger.Client, sf *shipfile.Ship
 		OutputDir: outputDir,
 		Container: ctr,
 	}, nil
-}
-
-// dropIntoShell opens an interactive bash terminal in ctr. Always writes to w
-// (os.Stderr from callers) so the message is visible regardless of Output routing.
-func dropIntoShell(ctx context.Context, w io.Writer, ctr *dagger.Container) {
-	fmt.Fprintln(w, "[!] Dropping into interactive shell...")
-	if _, err := ctr.Terminal(dagger.ContainerTerminalOpts{Cmd: []string{"/bin/bash"}}).Sync(ctx); err != nil {
-		fmt.Fprintf(w, "[!] Could not open interactive shell: %v\n", err)
-	}
 }
 
 // findContainerBinary returns a path to a shipyard binary suitable for injection

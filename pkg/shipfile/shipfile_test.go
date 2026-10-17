@@ -346,5 +346,64 @@ class Shipfile(Patcher):
 	}
 }
 
+func TestRunTestsSandboxExecutionAndFileWrite(t *testing.T) {
+	tmpDir := t.TempDir()
+	interp, err := shipfile.New(tmpDir)
+	if err != nil {
+		t.Fatalf("failed to create interpreter: %v", err)
+	}
+	defer interp.Close()
+
+	testFile := filepath.Join(tmpDir, "test_output.txt")
+	src := `
+import os
+from shipyard import Builder, Tester, Run, test
+
+class Shipfile(Builder, Tester):
+    Name = "test-sandbox"
+    Url = "https://github.com/example/repo"
+    Artifacts = r".*"
+
+    def build(self):
+        pass
+
+    @test("run and file write")
+    def check_run_and_write(self):
+        assert os.getenv("SHIPYARD_DEPTH") in ("0", "10")
+        res = Run("echo $SHIPYARD_DEPTH", quiet=True)
+        assert res.stdout.strip() == "1"
+        f = open("` + testFile + `", "w")
+        f.write(res.stdout.strip())
+        f.close()
+        r = open("` + testFile + `", "r")
+        data = r.read()
+        r.close()
+        assert data == "1"
+`
+	sf, err := shipfile.ValidateString(src, interp)
+	if err != nil {
+		t.Fatalf("ValidateString error: %v", err)
+	}
+
+	results, err := sf.RunTests(shipfile.RunContext{Version: "1.0.0"})
+	if err != nil {
+		t.Fatalf("RunTests error: %v", err)
+	}
+	if len(results) != 1 || !results[0].Passed {
+		t.Fatalf("expected 1 passing test, got: %+v", results)
+	}
+
+	// Verify MaxRunDepth = 10 blocks Run() when SHIPYARD_DEPTH >= 10
+	t.Setenv("SHIPYARD_DEPTH", "10")
+	resultsMax, err := sf.RunTests(shipfile.RunContext{Version: "1.0.0"})
+	if err != nil {
+		t.Fatalf("RunTests error at max depth: %v", err)
+	}
+	if len(resultsMax) != 1 || resultsMax[0].Passed || !strings.Contains(resultsMax[0].Error, "maximum shipyard.Run() recursion depth (10) exceeded") {
+		t.Fatalf("expected test to fail with max recursion depth error, got: %+v", resultsMax)
+	}
+}
+
+
 
 

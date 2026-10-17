@@ -6,11 +6,43 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/go-python/gpython/py"
 )
+
+// RunDepthEnv is the environment variable automatically set and incremented
+// on each shipyard.Run() subprocess invocation.
+const (
+	RunDepthEnv = "SHIPYARD_DEPTH"
+	MaxRunDepth = 10
+)
+
+func envWithIncrementedDepth() ([]string, error) {
+	depth := 0
+	if v := os.Getenv(RunDepthEnv); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			depth = n
+		}
+	}
+	if depth >= MaxRunDepth {
+		return nil, py.ExceptionNewf(py.RuntimeError,
+			"maximum shipyard.Run() recursion depth (%d) exceeded", MaxRunDepth)
+	}
+	base := os.Environ()
+	out := make([]string, 0, len(base)+1)
+	prefix := RunDepthEnv + "="
+	for _, kv := range base {
+		if strings.HasPrefix(kv, prefix) || strings.HasPrefix(kv, "SHIPYARD_IN_CONTAINER=") {
+			continue
+		}
+		out = append(out, kv)
+	}
+	out = append(out, fmt.Sprintf("%s=%d", RunDepthEnv, depth+1))
+	return out, nil
+}
 
 var (
 	executionCheckerMu sync.RWMutex
@@ -78,7 +110,7 @@ func runFn(self py.Object, args py.Tuple, kwargs py.StringDict) (py.Object, erro
 	}
 	if !isExecutionAllowed(mod.Context) {
 		return nil, py.ExceptionNewf(py.PermissionError,
-			"shipyard.Run() is only available during build phases (setup/build)")
+			"shipyard.Run() is only available during build and test phases (setup/build/test)")
 	}
 
 	if len(args) < 1 {
@@ -132,7 +164,12 @@ func runFn(self py.Object, args py.Tuple, kwargs py.StringDict) (py.Object, erro
 		stdinStr = string(str)
 	}
 
+	env, err := envWithIncrementedDepth()
+	if err != nil {
+		return nil, err
+	}
 	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.Env = env
 	if stdinStr != "" {
 		cmd.Stdin = strings.NewReader(stdinStr)
 	}
@@ -157,7 +194,7 @@ func runFn(self py.Object, args py.Tuple, kwargs py.StringDict) (py.Object, erro
 		cmd.Stderr = &stderr
 	}
 
-	err := cmd.Run()
+	err = cmd.Run()
 	rc := 0
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {

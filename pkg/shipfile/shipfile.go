@@ -1025,6 +1025,13 @@ func (s *Shipfile) Patch(ctx RunContext) ([]string, error) {
 	return s.RunCodePatches(ctx.SourceDir, ctx.Version, ctx.log(), ctx.overrides()...)
 }
 
+func currentRunDepth() string {
+	if d := os.Getenv(shipmod.RunDepthEnv); d != "" {
+		return d
+	}
+	return "0"
+}
+
 // Build invokes the shipfile's setup() and build() methods (or Setup/Build
 // shell strings if no Python methods are defined). Both execution and file read
 // are enabled for the duration of the call and restored afterwards.
@@ -1033,11 +1040,14 @@ func (s *Shipfile) Build(ctx RunContext) error {
 		return fmt.Errorf("shipfile interpreter is not initialized")
 	}
 	sb := s.interp.Sandbox()
+	prevExec := sb.ExecutionEnabled()
+	prevFileRead := sb.FileReadEnabled()
 	sb.SetExecution(true)
 	sb.SetFileRead(true)
+	sb.SetEnv(map[string]string{shipmod.RunDepthEnv: currentRunDepth()})
 	defer func() {
-		sb.SetExecution(false)
-		sb.SetFileRead(false)
+		sb.SetExecution(prevExec)
+		sb.SetFileRead(prevFileRead)
 	}()
 
 	overrides := ctx.overrides()
@@ -1063,10 +1073,22 @@ type TestResult struct {
 }
 
 // RunTests executes pre_test, all @test functions, and post_test in order.
+// Both execution and file read/write are enabled for the duration of the call.
 func (s *Shipfile) RunTests(ctx RunContext) ([]TestResult, error) {
 	if s.interp == nil {
 		return nil, fmt.Errorf("shipfile interpreter is not initialized")
 	}
+	sb := s.interp.Sandbox()
+	prevExec := sb.ExecutionEnabled()
+	prevFileRead := sb.FileReadEnabled()
+	sb.SetExecution(true)
+	sb.SetFileRead(true)
+	sb.SetEnv(map[string]string{shipmod.RunDepthEnv: currentRunDepth()})
+	defer func() {
+		sb.SetExecution(prevExec)
+		sb.SetFileRead(prevFileRead)
+	}()
+
 	inst := s.sfInst
 	if inst == nil && s.sfClass != nil {
 		var err error

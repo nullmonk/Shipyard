@@ -28,8 +28,14 @@ type BuildPackageOpts struct {
 	// OutputDir is the destination directory for exported artifacts (defaults to build-output/<image>).
 	OutputDir string
 
+	// Copy specifies a local directory to copy into the package source instead of upstream/distro.
+	Copy string
+
 	// Interactive drops into an interactive shell upon build completion or failure.
 	Interactive bool
+
+	// NoTest skips running @test functions after the build.
+	NoTest bool
 
 	// Verbose enables detailed step-by-step progress output.
 	Verbose bool
@@ -46,16 +52,24 @@ type BuildPackageOpts struct {
 }
 
 // SnapshotSource commits the pristine unpacked source so the in-container build
-// can diff changes made by `shipyard patch` before applying them via distro tools.
+// can diff changes made by `shipyard patch` before applying them via distro tools,
+// or restore changes via `shipyard reset`.
+// If git is not installed, SnapshotSource is a no-op.
 func SnapshotSource(ctr *dagger.Container, sourceDir string) *dagger.Container {
-	gitCmd := []string{"git", "-c", "user.name=shipyard", "-c", "user.email=shipyard@localhost"}
+	gitCmd := "git -c user.name=shipyard -c user.email=shipyard@localhost"
+	script := fmt.Sprintf(
+		`if command -v git >/dev/null 2>&1; then `+
+			`git config --global --add safe.directory "*" && `+
+			`git init -q && `+
+			`git add -A -f && `+
+			`%s commit -q -m pristine; `+
+			`fi`,
+		gitCmd,
+	)
 
 	return ctr.
-		WithExec([]string{"git", "config", "--global", "--add", "safe.directory", "*"}).
 		WithWorkdir(sourceDir).
-		WithExec([]string{"git", "init", "-q"}).
-		WithExec([]string{"git", "add", "-A", "-f"}).
-		WithExec(append(gitCmd, "commit", "-q", "-m", "pristine"))
+		WithExec([]string{"/bin/sh", "-c", script})
 }
 
 // GeneratePatch diffs the patched working tree against the pristine initial commit.
@@ -119,6 +133,15 @@ func BuildPackage(ctx context.Context, client *dagger.Client, sf *shipfile.Shipf
 	}
 	fmt.Fprintf(out, "    Source: %s\n", sourceDir)
 
+	if opts.Copy != "" {
+		copyDir, err := PullSource(ctx, client, SourceConfig{LocalDir: opts.Copy})
+		if err != nil {
+			return nil, fmt.Errorf("pull copy source: %w", err)
+		}
+		ctr = ctr.WithDirectory(sourceDir, copyDir)
+		fmt.Fprintf(out, "[*] Overriding package source with copy from %s\n", opts.Copy)
+	}
+
 	// Step 2: Copy pristine source for later diff generation and interactive reset.
 	ctr = ctr.
 		WithExec([]string{"/bin/sh", "-c", fmt.Sprintf("cp -a '%s' /tmp/.shipyard-pristine", sourceDir)}).
@@ -162,7 +185,8 @@ func BuildPackage(ctx context.Context, client *dagger.Client, sf *shipfile.Shipf
 		WithEnvVariable("SHIPYARD_PACKAGE", pkgName).
 		WithEnvVariable("SHIPYARD_DISTRO", driver.DistroName()).
 		WithEnvVariable("SHIPYARD_DISTRO_VERSION", distroVersion).
-		WithEnvVariable("SHIPYARD_TOPDIR", driver.TopDir())
+		WithEnvVariable("SHIPYARD_TOPDIR", driver.TopDir()).
+		WithWorkdir(sourceDir)
 
 	if opts.Version != "" {
 		ctr = ctr.WithEnvVariable("SHIPYARD_VERSION", opts.Version)
@@ -184,15 +208,23 @@ func BuildPackage(ctx context.Context, client *dagger.Client, sf *shipfile.Shipf
 			var execErr *dagger.ExecError
 			if errors.As(err, &execErr) {
 				if execErr.Stdout != "" {
+					outStr := execErr.Stdout
+					if !strings.HasSuffix(outStr, "\n") {
+						outStr += "\n"
+					}
 					// Write to cmdOut so services capture it, and always echo to out so
 					// the operator sees it even when cmdOut is discarded.
-					fmt.Fprint(cmdOut, execErr.Stdout)
+					fmt.Fprint(cmdOut, outStr)
 					if cmdOut == io.Discard {
-						fmt.Fprint(out, execErr.Stdout)
+						fmt.Fprint(out, outStr)
 					}
 				}
 				if execErr.Stderr != "" {
-					fmt.Fprint(cmdErr, execErr.Stderr)
+					errStr := execErr.Stderr
+					if !strings.HasSuffix(errStr, "\n") {
+						errStr += "\n"
+					}
+					fmt.Fprint(cmdErr, errStr)
 				}
 			}
 			return nil, err
@@ -206,7 +238,7 @@ func BuildPackage(ctx context.Context, client *dagger.Client, sf *shipfile.Shipf
 
 	if synced, err := runStep("[*] Patching source code...", []string{"shipyard", "patch"}); err != nil {
 		if opts.Interactive {
-			dropIntoShell(ctx, os.Stderr, ctrPreBuild)
+			dropIntoShell(ctx, client, os.Stderr, ctrPreBuild)
 		}
 		return nil, fmt.Errorf("patch failed: %w", err)
 	} else {
@@ -215,7 +247,7 @@ func BuildPackage(ctx context.Context, client *dagger.Client, sf *shipfile.Shipf
 
 	if synced, err := runStep("[*] Applying patches...", []string{"shipyard", "apply"}); err != nil {
 		if opts.Interactive {
-			dropIntoShell(ctx, os.Stderr, ctr)
+			dropIntoShell(ctx, client, os.Stderr, ctr)
 		}
 		return nil, fmt.Errorf("apply failed: %w", err)
 	} else {
@@ -224,11 +256,22 @@ func BuildPackage(ctx context.Context, client *dagger.Client, sf *shipfile.Shipf
 
 	if synced, err := runStep(fmt.Sprintf("[*] Building package: %s...", pkgName), []string{"shipyard", "build"}); err != nil {
 		if opts.Interactive {
-			dropIntoShell(ctx, os.Stderr, ctr)
+			dropIntoShell(ctx, client, os.Stderr, ctr)
 		}
 		return nil, fmt.Errorf("build failed: %w", err)
 	} else {
 		ctr = synced
+	}
+
+	if sf != nil && sf.IsTest() && !opts.NoTest {
+		if synced, err := runStep("[*] Running tests...", []string{"shipyard", "test"}); err != nil {
+			if opts.Interactive {
+				dropIntoShell(ctx, client, os.Stderr, ctr)
+			}
+			return nil, fmt.Errorf("tests failed: %w", err)
+		} else {
+			ctr = synced
+		}
 	}
 
 	// Step 7: Extract artifacts
@@ -259,7 +302,7 @@ func BuildPackage(ctx context.Context, client *dagger.Client, sf *shipfile.Shipf
 	files, err := FindFiles(ctx, ctr, srcDir)
 	if err != nil {
 		if opts.Interactive {
-			dropIntoShell(ctx, os.Stderr, ctr)
+			dropIntoShell(ctx, client, os.Stderr, ctr)
 		}
 		return nil, fmt.Errorf("artifact collection failed: %w", err)
 	}
@@ -267,14 +310,9 @@ func BuildPackage(ctx context.Context, client *dagger.Client, sf *shipfile.Shipf
 	ctr, matches, err := ExportArtifacts(ctx, ctr, files, srcDir, artifactPattern, outputDir)
 	if err != nil {
 		if opts.Interactive {
-			dropIntoShell(ctx, os.Stderr, ctr)
+			dropIntoShell(ctx, client, os.Stderr, ctr)
 		}
 		return nil, err
-	}
-
-	if opts.Interactive {
-		fmt.Fprintln(os.Stderr, "[*] Build successful. Dropping into interactive shell...")
-		dropIntoShell(ctx, os.Stderr, ctr)
 	}
 
 	return &BuildResult{

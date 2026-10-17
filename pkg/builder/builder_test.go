@@ -15,7 +15,7 @@ func TestDaggerBuildPipeline(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	engine, err := builder.Connect(ctx, "")
+	engine, err := builder.Connect(ctx, "", false)
 	if err != nil {
 		t.Skipf("skipping Dagger test: failed to connect to Dagger engine: %v", err)
 	}
