@@ -105,10 +105,10 @@ class Shipfile(Patcher):
     ]
 
     @CodePatch(r".*\.c$")
-    def patch_code(file, ctx):
+    def patch_code(self, file):
         pass
 
-    def save(self, ctx): pass
+    def save(self): pass
 `
 	sf, err := shipfile.ValidateString(src, interp)
 	if err != nil {
@@ -191,9 +191,9 @@ class Shipfile(Patcher):
     ]
 
     @CodePatch(r".*\.c$")
-    def patch_code(file, ctx): pass
+    def patch_code(self, file): pass
 
-    def save(self, ctx): pass
+    def save(self): pass
 `
 	sf, err := shipfile.ValidateString(src, interp)
 	if err != nil {
@@ -273,11 +273,11 @@ class Shipfile(Patcher):
     ]
 
     @CodePatch(r"servconf\.c$")
-    def banner(file, ctx):
-        b = ctx.variables["BANNER"]
+    def banner(self, file):
+        b = self.ctx.variables["BANNER"]
         file.replace("options->banner = NULL;", 'options->banner = "%s";' % b)
 
-    def save(self, ctx): pass
+    def save(self): pass
 `
 	sf, err := shipfile.ValidateString(src, interp)
 	if err != nil {
@@ -311,11 +311,11 @@ class Shipfile(Patcher):
     PackageName = "err-pkg"
 
     @CodePatch(r"servconf\.c$")
-    def banner(file, ctx):
-        val = ctx.variables["MISSING_KEY"]
+    def banner(self, file):
+        val = self.ctx.variables["MISSING_KEY"]
         file.replace("a", val)
 
-    def save(self, ctx): pass
+    def save(self): pass
 `
 	sfErr, err := shipfile.ValidateString(errSrc, interp)
 	if err != nil {
@@ -591,18 +591,18 @@ class Shipfile(Builder):
         Variable("ENV", "Target environment", "prod"),
     ]
 
-    def build(self, ctx):
-        assert isinstance(ctx.variables, dict), "ctx.variables must be a dict, got {}".format(type(ctx.variables))
-        assert type(ctx.variables) is dict, "type(ctx.variables) must be dict"
-        assert ctx.variables["PORT"] == 8080, "PORT must be resolved to int 8080, got {!r}".format(ctx.variables["PORT"])
-        assert ctx.variables["ENV"] == "prod"
-        assert ctx.variables.get("PORT") == 8080
-        assert "PORT" in ctx.variables
-        assert "MISSING" not in ctx.variables
+    def build(self):
+        assert isinstance(self.ctx.variables, dict), "self.ctx.variables must be a dict, got {}".format(type(self.ctx.variables))
+        assert type(self.ctx.variables) is dict, "type(self.ctx.variables) must be dict"
+        assert self.ctx.variables["PORT"] == 8080, "PORT must be resolved to int 8080, got {!r}".format(self.ctx.variables["PORT"])
+        assert self.ctx.variables["ENV"] == "prod"
+        assert self.ctx.variables.get("PORT") == 8080
+        assert "PORT" in self.ctx.variables
+        assert "MISSING" not in self.ctx.variables
 
-    def save(self, ctx):
-        assert isinstance(ctx.variables, dict)
-        assert ctx.variables["PORT"] == 8080
+    def save(self):
+        assert isinstance(self.ctx.variables, dict)
+        assert self.ctx.variables["PORT"] == 8080
 `
 	sf, err := shipfile.ValidateString(src, interp)
 	if err != nil {
@@ -630,11 +630,11 @@ class Shipfile(Builder):
         Variable("ENV", "Target environment", "prod"),
     ]
 
-    def build(self, ctx):
-        assert ctx.variables["PORT"] == 9000, "expected overridden PORT 9000, got {!r}".format(ctx.variables["PORT"])
-        assert ctx.variables["ENV"] == "dev", "expected overridden ENV dev, got {!r}".format(ctx.variables["ENV"])
+    def build(self):
+        assert self.ctx.variables["PORT"] == 9000, "expected overridden PORT 9000, got {!r}".format(self.ctx.variables["PORT"])
+        assert self.ctx.variables["ENV"] == "dev", "expected overridden ENV dev, got {!r}".format(self.ctx.variables["ENV"])
 
-    def save(self, ctx): pass
+    def save(self): pass
 `
 	sfOv, err := shipfile.ValidateString(overrideSrc, interp)
 	if err != nil {
@@ -690,12 +690,12 @@ class Shipfile(Patcher):
     ]
 
     @CodePatch(r"test\.txt$")
-    def patch_file(file, ctx):
-        assert isinstance(ctx.variables, dict), "expected dict, got {}".format(type(ctx.variables))
-        assert ctx.variables["TAG"] == "V2.0.0", "expected V2.0.0, got {!r}".format(ctx.variables["TAG"])
-        file.replace("ORIGINAL", ctx.variables["TAG"])
+    def patch_file(self, file):
+        assert isinstance(self.ctx.variables, dict), "expected dict, got {}".format(type(self.ctx.variables))
+        assert self.ctx.variables["TAG"] == "V2.0.0", "expected V2.0.0, got {!r}".format(self.ctx.variables["TAG"])
+        file.replace("ORIGINAL", self.ctx.variables["TAG"])
 
-    def save(self, ctx): pass
+    def save(self): pass
 `
 	sfPatch, err := shipfile.ValidateString(patchSrc, interp)
 	if err != nil {

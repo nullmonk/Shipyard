@@ -64,7 +64,7 @@ from shipyard import Shipfile
 
 class Shipfile:
     Name = "test"
-    def package_name(self, ctx=None):
+    def package_name(self):
         return "custom-pkg"
 `)
 	if err := sfPkgMethod.Validate(); err != nil {
@@ -142,10 +142,10 @@ class Shipfile(Patcher):
     PackageName = "test-pkg"
 
     @CodePatch(r".*\.c$")
-    def patch_it(file, version):
+    def patch_it(self, file):
         pass
 
-    def save(self, ctx): pass
+    def save(self): pass
 `)
 	if err := sfWithCodePatch.Validate(); err != nil {
 		t.Errorf("expected valid for Patcher with CodePatch, got: %v", err)
@@ -159,8 +159,8 @@ class Shipfile(Patcher):
     Name = "test"
     PackageName = "test-pkg"
 
-    def pre_patch(self, ctx): pass
-    def save(self, ctx): pass
+    def pre_patch(self): pass
+    def save(self): pass
 `)
 	if err := sfWithPrePatch.Validate(); err != nil {
 		t.Errorf("expected valid for Patcher with pre_patch, got: %v", err)
@@ -174,8 +174,8 @@ class Shipfile(Patcher):
     Name = "test"
     PackageName = "test-pkg"
 
-    def post_patch(self, ctx): pass
-    def save(self, ctx): pass
+    def post_patch(self): pass
+    def save(self): pass
 `)
 	if err := sfWithPostPatch.Validate(); err != nil {
 		t.Errorf("expected valid for Patcher with post_patch, got: %v", err)
@@ -189,7 +189,7 @@ class Shipfile(Patcher):
     Name = "test"
     PackageName = "test-pkg"
 
-    def save(self, ctx): pass
+    def save(self): pass
 `)
 	if err := sfEmptyPatcher.Validate(); err == nil {
 		t.Errorf("expected error for Patcher without patch logic, got nil")
@@ -204,7 +204,7 @@ class Shipfile(Patcher):
     PackageName = "test-pkg"
 
     @CodePatch(r".*\.c$")
-    def patch_it(file, version):
+    def patch_it(self, file):
         pass
 `)
 	if err := sfNoSave.Validate(); err == nil {
@@ -221,10 +221,10 @@ class Shipfile(Builder):
     Name = "test"
     PackageName = "test-pkg"
 
-    def build(self, ctx):
+    def build(self):
         pass
 
-    def save(self, ctx):
+    def save(self):
         pass
 `)
 	if err := sfBuildSave.Validate(); err != nil {
@@ -239,10 +239,10 @@ class Shipfile(Builder):
     Name = "test"
     PackageName = "test-pkg"
 
-    def setup(self, ctx):
+    def setup(self):
         pass
 
-    def save(self, ctx):
+    def save(self):
         pass
 `)
 	if err := sfSetupSave.Validate(); err != nil {
@@ -257,7 +257,7 @@ class Shipfile(Builder):
     Name = "test"
     PackageName = "test-pkg"
 
-    def build(self, ctx):
+    def build(self):
         pass
 `)
 	if err := sfNoSave.Validate(); err != nil {
@@ -272,7 +272,7 @@ class Shipfile(Builder):
     Name = "test"
     PackageName = "test-pkg"
 
-    def save(self, ctx):
+    def save(self):
         pass
 `)
 	if err := sfNoStep.Validate(); err == nil {
@@ -290,13 +290,13 @@ class Shipfile(Patcher, Builder):
     PackageName = "test-pkg"
 
     @CodePatch(r".*\.c$")
-    def patch_it(file, version):
+    def patch_it(self, file):
         pass
 
-    def build(self, ctx):
+    def build(self):
         pass
 
-    def save(self, ctx):
+    def save(self):
         pass
 `)
 	if err := sfBothValid.Validate(); err != nil {
@@ -311,10 +311,10 @@ class Shipfile(Patcher, Builder):
     Name = "test"
     PackageName = "test-pkg"
 
-    def build(self, ctx):
+    def build(self):
         pass
 
-    def save(self, ctx):
+    def save(self):
         pass
 `)
 	if err := sfMissingPatch.Validate(); err == nil {
@@ -330,10 +330,10 @@ class Shipfile(Patcher, Builder):
     PackageName = "test-pkg"
 
     @CodePatch(r".*\.c$")
-    def patch_it(file, version):
+    def patch_it(self, file):
         pass
 
-    def save(self, ctx):
+    def save(self):
         pass
 `)
 	if err := sfMissingBuild.Validate(); err == nil {
@@ -349,10 +349,10 @@ class Shipfile(Patcher, Builder):
     PackageName = "test-pkg"
 
     @CodePatch(r".*\.c$")
-    def patch_it(file, version):
+    def patch_it(self, file):
         pass
 
-    def build(self, ctx):
+    def build(self):
         pass
 `)
 	if err := sfMissingSave.Validate(); err == nil {
@@ -368,8 +368,8 @@ from shipyard import Builder, Variable
 class Shipfile(Builder):
     Name = "test"
     PackageName = "test-pkg"
-    def build(self, ctx): pass
-    def save(self, ctx): pass
+    def build(self): pass
+    def save(self): pass
 
     Variables = [
         Variable("MY_VAR", "My description", "valid_string"),
@@ -397,8 +397,8 @@ def check_val(v):
 class Shipfile(Builder):
     Name = "test"
     PackageName = "test-pkg"
-    def build(self, ctx): pass
-    def save(self, ctx): pass
+    def build(self): pass
+    def save(self): pass
 
     Variables = [
         Variable("MY_VAR", "My description", "valid", validate=check_val),
@@ -424,8 +424,8 @@ def check_val(v):
 class Shipfile(Builder):
     Name = "test"
     PackageName = "test-pkg"
-    def build(self, ctx): pass
-    def save(self, ctx): pass
+    def build(self): pass
+    def save(self): pass
 
     Variables = [
         Variable("MY_VAR", "My description", "test", validate=check_val),
@@ -444,8 +444,8 @@ from shipyard import Builder, Variable
 class Shipfile(Builder):
     Name = "test"
     PackageName = "test-pkg"
-    def build(self, ctx): pass
-    def save(self, ctx): pass
+    def build(self): pass
+    def save(self): pass
 
     Variables = [
         Variable("MY_VAR", "My description", 12345),
@@ -478,10 +478,10 @@ class Shipfile(Patcher):
     ]
 
     @CodePatch(r".*main\.c$")
-    def apply_banner(file, ctx):
-        file.replace("DEFAULT", ctx.variables["BANNER"])
+    def apply_banner(self, file):
+        file.replace("DEFAULT", self.ctx.variables["BANNER"])
 
-    def save(self, ctx): pass
+    def save(self): pass
 `, interp)
 	if err != nil {
 		t.Fatalf("ValidateString failed: %v", err)

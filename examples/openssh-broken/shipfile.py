@@ -29,7 +29,7 @@ class Shipfile(Patcher):
     ]
 
     @CodePatch(r".*servconf\.c$")
-    def banner(file, ctx):
+    def banner(self, file):
         # This replace will fail: the search string does not exist in the file.
         file.replace(
             "THIS_STRING_DOES_NOT_EXIST_IN_SERVCONF",

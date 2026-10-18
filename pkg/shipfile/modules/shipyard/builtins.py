@@ -207,6 +207,7 @@ def _is_valid_source_url(raw_url):
 
 
 class Shipfile:
+    ctx = None
     Name = ""
     Url = ""
     Urls = []
@@ -234,10 +235,10 @@ class Shipfile:
     def is_version_ignored(cls, version):
         return version in cls.IgnoredVersions
 
-    def package_name(self, ctx=None):
+    def package_name(self):
         return self.PackageName
 
-    def repository(self, ctx=None):
+    def repository(self):
         return self.Repository
 
     def get_variables(self=None):
@@ -252,20 +253,20 @@ class Shipfile:
 class Patcher(Shipfile):
     Patches = "patches/"
 
-    def pre_patch(self, ctx=None): pass
-    def post_patch(self, ctx=None): pass
+    def pre_patch(self): pass
+    def post_patch(self): pass
 
 
 class Builder(Shipfile):
     BaseImage = ""
 
-    def setup(self, ctx=None): pass
-    def build(self, ctx=None): pass
+    def setup(self): pass
+    def build(self): pass
 
 
 class Tester(Shipfile):
-    def pre_test(self, ctx=None): pass
-    def post_test(self, ctx=None): pass
+    def pre_test(self): pass
+    def post_test(self): pass
 
 
 def validate(obj):
@@ -281,7 +282,7 @@ def validate(obj):
         pn = getattr(obj, "package_name", None)
         if callable(pn):
             try:
-                pkg = pn(None)
+                pkg = pn()
             except Exception:
                 pass
         elif isinstance(pn, str):

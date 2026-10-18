@@ -54,7 +54,7 @@ class Shipfile(Patcher):
     ]
 
     @CodePatch(r".*servconf\.c$")
-    def banner(file, ctx):
+    def banner(self, file):
         """
         sshd fills in the default VersionAddendum (an empty string) here,
         which is later appended to SSH_VERSION when building the
@@ -66,7 +66,7 @@ class Shipfile(Patcher):
             'if (options->version_addendum == NULL)\n'
             '\t\toptions->version_addendum = xstrdup("");',
             'if (options->version_addendum == NULL)\n'
-            '\t\toptions->version_addendum = xstrdup("' + ctx.variables["__BANNER__"] + '");',
+            '\t\toptions->version_addendum = xstrdup("' + self.ctx.variables["__BANNER__"] + '");',
             err="Cannot find default VersionAddendum assignment in {file}",
         )
 
@@ -88,7 +88,7 @@ class Shipfile(Patcher):
             return "0.0"
         return "{}.{}p{}".format(m.group("major"), m.group("minor"), m.group("portable"))
 
-    def save(self, ctx):
+    def save(self):
         Save("openssh-server_*.deb", "openssh-server.deb")
 
     @staticmethod

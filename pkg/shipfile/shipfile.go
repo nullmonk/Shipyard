@@ -159,7 +159,7 @@ func (s *Shipfile) NewContext(version string, overrides ...map[string]string) (p
 	return py.Call(ctxCls, py.Tuple{}, kwargs)
 }
 
-// CallMethod creates a Context with ctx.variables populated and invokes methodName on inst.
+// CallMethod creates a Context with ctx.variables populated, attaches it to inst.ctx, and invokes methodName on inst.
 func (s *Shipfile) CallMethod(inst py.Object, methodName string, overrides ...map[string]string) error {
 	if inst == nil {
 		inst = s.sfInst
@@ -168,13 +168,16 @@ func (s *Shipfile) CallMethod(inst py.Object, methodName string, overrides ...ma
 	if err != nil {
 		return err
 	}
+	if inst != nil && ctxObj != nil {
+		_, _ = py.SetAttrString(inst, "ctx", ctxObj)
+	}
 
 	fn, found := findMethodInType(s.sfClass, inst, methodName)
 	if !found {
 		return fmt.Errorf("no method %s found on Shipfile instance", methodName)
 	}
 
-	if err := callMethodWithCtx(fn, inst, ctxObj); err != nil {
+	if err := callMethod(fn, inst); err != nil {
 		py.TracebackDump(err)
 		return fmt.Errorf("%s() failed: %v", methodName, err)
 	}
@@ -212,64 +215,25 @@ func findMethodInType(sfClass, inst py.Object, name string) (py.Object, bool) {
 	return nil, false
 }
 
-// callMethodWithCtx calls a method (setup, build, pre_patch, post_patch) with the exact arguments
-// expected by its Python function signature so runtime exceptions inside the method are never masked.
-func callMethodWithCtx(fn, inst, ctxObj py.Object) error {
-	if pyFn, ok := fn.(*py.Function); ok && pyFn.Code != nil {
-		argc := int(pyFn.Code.Argcount)
-		hasSelf := argc > 0 && len(pyFn.Code.Varnames) > 0 && pyFn.Code.Varnames[0] == "self"
-		var args py.Tuple
-		if hasSelf {
-			if argc >= 2 {
-				args = py.Tuple{inst, ctxObj}
-			} else {
-				args = py.Tuple{inst}
-			}
-		} else {
-			if argc >= 1 {
-				args = py.Tuple{ctxObj}
-			} else {
-				args = py.Tuple{}
-			}
-		}
-		_, err := py.Call(fn, args, nil)
-		return err
-	}
-	if _, err := py.Call(fn, py.Tuple{ctxObj}, nil); err == nil {
-		return nil
-	} else {
-		_, err2 := py.Call(fn, py.Tuple{}, nil)
-		if err2 == nil {
-			return nil
-		}
-		return err
-	}
+// callMethod calls a Shipfile method with inst (self).
+func callMethod(fn, inst py.Object) error {
+	_, err := py.Call(fn, py.Tuple{inst}, nil)
+	return err
 }
 
-// callCodePatchWithCtx calls a @CodePatch function with the exact arguments expected by its
-// signature: (file, ctx), (self, file, ctx), (file), or (self, file).
-func callCodePatchWithCtx(fn, inst, cfObj, ctxObj py.Object) error {
+// callCodePatch calls a @CodePatch function with (self, file) or (file).
+func callCodePatch(fn, inst, cfObj py.Object) error {
 	if pyFn, ok := fn.(*py.Function); ok && pyFn.Code != nil {
 		argc := int(pyFn.Code.Argcount)
 		hasSelf := argc > 0 && len(pyFn.Code.Varnames) > 0 && pyFn.Code.Varnames[0] == "self"
-		var args py.Tuple
 		if hasSelf {
-			if argc >= 3 {
-				args = py.Tuple{inst, cfObj, ctxObj}
-			} else {
-				args = py.Tuple{inst, cfObj}
-			}
-		} else {
-			if argc >= 2 {
-				args = py.Tuple{cfObj, ctxObj}
-			} else {
-				args = py.Tuple{cfObj}
-			}
+			_, err := py.Call(fn, py.Tuple{inst, cfObj}, nil)
+			return err
 		}
-		_, err := py.Call(fn, args, nil)
+		_, err := py.Call(fn, py.Tuple{cfObj}, nil)
 		return err
 	}
-	_, err := py.Call(fn, py.Tuple{cfObj, ctxObj}, nil)
+	_, err := py.Call(fn, py.Tuple{inst, cfObj}, nil)
 	return err
 }
 
@@ -294,6 +258,9 @@ func (s *Shipfile) RunCodePatches(sourceDir, version string, log io.Writer, over
 	if err != nil {
 		return nil, err
 	}
+	if inst != nil && ctxObj != nil {
+		_, _ = py.SetAttrString(inst, "ctx", ctxObj)
+	}
 
 	sb := s.interp.Sandbox()
 	prevFileRead := sb.FileReadEnabled()
@@ -303,7 +270,7 @@ func (s *Shipfile) RunCodePatches(sourceDir, version string, log io.Writer, over
 	if s.HasPrePatch && inst != nil {
 		if fn, ok := findMethodInType(s.sfClass, inst, "pre_patch"); ok {
 			fmt.Fprintln(log, "[*] hook: pre_patch")
-			if err := callMethodWithCtx(fn, inst, ctxObj); err != nil {
+			if err := callMethod(fn, inst); err != nil {
 				return nil, fmt.Errorf("pre_patch failed: %w", err)
 			}
 		}
@@ -451,7 +418,7 @@ func (s *Shipfile) RunCodePatches(sourceDir, version string, log io.Writer, over
 				return fmt.Errorf("init CodeFile(%s): %w", relPath, err)
 			}
 
-			if callErr := callCodePatchWithCtx(cp.fn, inst, cfObj, ctxObj); callErr != nil {
+			if callErr := callCodePatch(cp.fn, inst, cfObj); callErr != nil {
 				return fmt.Errorf("code patch %s failed on %s: %w", cp.name, relPath, callErr)
 			}
 			appliedMap[cp.name] = true
@@ -471,7 +438,7 @@ func (s *Shipfile) RunCodePatches(sourceDir, version string, log io.Writer, over
 	if s.HasPostPatch && inst != nil {
 		if fn, ok := findMethodInType(s.sfClass, inst, "post_patch"); ok {
 			fmt.Fprintln(log, "[*] hook: post_patch")
-			if err := callMethodWithCtx(fn, inst, ctxObj); err != nil {
+			if err := callMethod(fn, inst); err != nil {
 				return nil, fmt.Errorf("post_patch failed: %w", err)
 			}
 		}
@@ -694,6 +661,11 @@ func loadModule(mod *py.Module, absPath string, interp *Interpreter) (*Shipfile,
 
 	inst, _ := py.Call(sfClass, nil, nil)
 	sf.sfInst = inst
+	if inst != nil {
+		if initialCtx, err := sf.NewContext(""); err == nil && initialCtx != nil {
+			_, _ = py.SetAttrString(inst, "ctx", initialCtx)
+		}
+	}
 
 	if typ, ok := sfClass.(*py.Type); ok {
 		checkDict := func(dict py.StringDict) {
@@ -785,20 +757,10 @@ func loadModule(mod *py.Module, absPath string, interp *Interpreter) (*Shipfile,
 	// If sf.PackageName is empty but package_name method exists, try invoking it on an instance
 	if sf.PackageName == "" && sf.HasPackageName {
 		if inst != nil {
-			ctxObj, _ := sf.NewContext("")
 			if meth, err := py.GetAttrString(inst, "package_name"); err == nil {
-				if ctxObj != nil {
-					if res, err := py.Call(meth, py.Tuple{ctxObj}, nil); err == nil {
-						if s, ok := res.(py.String); ok && string(s) != "" {
-							sf.PackageName = string(s)
-						}
-					}
-				}
-				if sf.PackageName == "" {
-					if res, err := py.Call(meth, nil, nil); err == nil {
-						if s, ok := res.(py.String); ok && string(s) != "" {
-							sf.PackageName = string(s)
-						}
+				if res, err := py.Call(meth, nil, nil); err == nil {
+					if s, ok := res.(py.String); ok && string(s) != "" {
+						sf.PackageName = string(s)
 					}
 				}
 			}
@@ -1249,10 +1211,13 @@ func (s *Shipfile) RunTests(ctx RunContext) ([]TestResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	if inst != nil && ctxObj != nil {
+		_, _ = py.SetAttrString(inst, "ctx", ctxObj)
+	}
 
 	if s.HasPreTest && inst != nil {
 		if fn, ok := findMethodInType(s.sfClass, inst, "pre_test"); ok {
-			if err := callMethodWithCtx(fn, inst, ctxObj); err != nil {
+			if err := callMethod(fn, inst); err != nil {
 				return nil, fmt.Errorf("pre_test failed: %w", err)
 			}
 		}
@@ -1299,7 +1264,7 @@ func (s *Shipfile) RunTests(ctx RunContext) ([]TestResult, error) {
 	var results []TestResult
 	for _, te := range tests {
 		result := TestResult{Name: te.name, Description: te.description}
-		if callErr := callMethodWithCtx(te.fn, inst, ctxObj); callErr != nil {
+		if callErr := callMethod(te.fn, inst); callErr != nil {
 			result.Passed = false
 			result.Error = fmt.Sprintf("%v", callErr)
 		} else {
@@ -1310,7 +1275,7 @@ func (s *Shipfile) RunTests(ctx RunContext) ([]TestResult, error) {
 
 	if s.HasPostTest && inst != nil {
 		if fn, ok := findMethodInType(s.sfClass, inst, "post_test"); ok {
-			if err := callMethodWithCtx(fn, inst, ctxObj); err != nil {
+			if err := callMethod(fn, inst); err != nil {
 				return results, fmt.Errorf("post_test failed: %w", err)
 			}
 		}

@@ -42,7 +42,7 @@ If you run `shipyard build debian:bookworm`, it will use "proftpd". You can over
 The directory which contains the source repo, relative to the Shipfile. Can either be a string or a function which returns a string.
 
 #### Variables
-Variables allow configuring string values (e.g. banners, keys, ports, options) that can be overridden and inspected without modifying patch functions. `Shipfile.Variables` is an array of `Variable` objects, and at runtime the resolved variable values are passed as a dictionary on `ctx.variables`:
+Variables allow configuring string values (e.g. banners, keys, ports, options) that can be overridden and inspected without modifying patch functions. `Shipfile.Variables` is an array of `Variable` objects, and at runtime the resolved variable values are available on `self.ctx.variables`:
 
 ```python
 from shipyard import Patcher, Variable, CodePatch
@@ -60,8 +60,8 @@ class Shipfile(Patcher):
     ]
 
     @CodePatch(r".*servconf\.c$")
-    def banner(file, ctx):
-        file.replace('xstrdup("")', 'xstrdup("' + ctx.variables["__BANNER__"] + '")')
+    def banner(self, file):
+        file.replace('xstrdup("")', 'xstrdup("' + self.ctx.variables["__BANNER__"] + '")')
 ```
 
 Variables must have string values, and can optionally specify a `validate=func(val)` callback that returns an error string if invalid.
