@@ -782,19 +782,18 @@ v = Variable("BANNER", "Banner comment", "hello world", validate=check_banner)
 		t.Fatalf("expected valid validator to succeed, got: %v", err)
 	}
 
-	// 4. Validator returning error string (invalid)
+	// 4. Validator raising an exception (invalid)
 	invalidFnSrc := `
 from shipyard import Variable
 
 def check_banner(val):
     if len(val) < 10:
-        return "too short, must be at least 10 chars"
-    return None
+        raise ValueError("too short, must be at least 10 chars")
 
 v = Variable("BANNER", "Banner comment", "short", validate=check_banner)
 `
 	if _, err := runPySrc(t, interp, invalidFnSrc); err == nil {
-		t.Fatalf("expected validator returning error string to fail, got nil")
+		t.Fatalf("expected validator that raises to fail, got nil")
 	}
 
 	// 5. Non-string description must fail
@@ -805,6 +804,19 @@ v = Variable("FOO", 12345, "bar")
 `
 	if _, err := runPySrc(t, interp, badDescSrc); err == nil {
 		t.Fatalf("expected non-string description to fail, got nil")
+	}
+
+	// 6. Validator returning a non-string type is accepted at construction time
+	anyTypeSrc := `
+from shipyard import Variable
+
+def to_int(val):
+    return int(val)
+
+v = Variable("PORT", "Port number", "8080", validate=to_int)
+`
+	if _, err := runPySrc(t, interp, anyTypeSrc); err != nil {
+		t.Fatalf("expected validator returning int to succeed at construction, got: %v", err)
 	}
 }
 
@@ -864,3 +876,131 @@ mod_vars = shipyard.get_variables(MyShipfile)
 	checkList(instVarsObj, "inst_vars")
 	checkList(modVarsObj, "mod_vars")
 }
+
+func TestRunAndScriptStreaming(t *testing.T) {
+	interp := newTestInterpreter(t)
+	interp.Sandbox().SetExecution(true)
+
+	// Test 1: Run streams output to os.Stdout when quiet=False (default)
+	origStdout := os.Stdout
+	rOut, wOut, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = wOut
+
+	srcRun := `
+import shipyard
+res = shipyard.Run("echo streamed_run_output")
+stdout_val = res.stdout
+rc_val = res.returncode
+`
+	mod, err := runPySrc(t, interp, srcRun)
+	wOut.Close()
+	os.Stdout = origStdout
+
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	buf := make([]byte, 1024)
+	n, _ := rOut.Read(buf)
+	streamed := string(buf[:n])
+	if !strings.Contains(streamed, "streamed_run_output") {
+		t.Errorf("expected stdout to stream 'streamed_run_output', got %q", streamed)
+	}
+
+	outVal := string(mod.Globals["stdout_val"].(py.String))
+	if !strings.Contains(outVal, "streamed_run_output") {
+		t.Errorf("expected res.stdout to contain 'streamed_run_output', got %q", outVal)
+	}
+	rcVal := int(mod.Globals["rc_val"].(py.Int))
+	if rcVal != 0 {
+		t.Errorf("expected returncode 0, got %d", rcVal)
+	}
+
+	// Test 2: Run does not stream when quiet=True
+	origStdout = os.Stdout
+	rOut, wOut, _ = os.Pipe()
+	os.Stdout = wOut
+
+	srcQuiet := `
+import shipyard
+res_q = shipyard.Run("echo quiet_run_output", quiet=True)
+stdout_q = res_q.stdout
+`
+	modQ, err := runPySrc(t, interp, srcQuiet)
+	wOut.Close()
+	os.Stdout = origStdout
+
+	if err != nil {
+		t.Fatalf("Run quiet failed: %v", err)
+	}
+	n, _ = rOut.Read(buf)
+	streamedQ := string(buf[:n])
+	if strings.Contains(streamedQ, "quiet_run_output") {
+		t.Errorf("expected quiet Run not to stream output, but got %q", streamedQ)
+	}
+	outValQ := string(modQ.Globals["stdout_q"].(py.String))
+	if !strings.Contains(outValQ, "quiet_run_output") {
+		t.Errorf("expected res_q.stdout to contain 'quiet_run_output', got %q", outValQ)
+	}
+
+	// Test 3: Script without shebang (defaults to /bin/sh) streams output
+	origStdout = os.Stdout
+	rOut, wOut, _ = os.Pipe()
+	os.Stdout = wOut
+
+	srcScript := `
+from shipyard import Script
+s = Script("""
+echo streamed_script_output
+""")
+s_out = s.stdout
+s_rc = s.returncode
+s_bool = True if s else False
+`
+	modS, err := runPySrc(t, interp, srcScript)
+	wOut.Close()
+	os.Stdout = origStdout
+
+	if err != nil {
+		t.Fatalf("Script failed: %v", err)
+	}
+	n, _ = rOut.Read(buf)
+	streamedS := string(buf[:n])
+	if !strings.Contains(streamedS, "streamed_script_output") {
+		t.Errorf("expected stdout to stream 'streamed_script_output', got %q", streamedS)
+	}
+	sOutVal := string(modS.Globals["s_out"].(py.String))
+	if !strings.Contains(sOutVal, "streamed_script_output") {
+		t.Errorf("expected s.stdout to contain 'streamed_script_output', got %q", sOutVal)
+	}
+	sRc := int(modS.Globals["s_rc"].(py.Int))
+	if sRc != 0 {
+		t.Errorf("expected s.returncode 0, got %d", sRc)
+	}
+	sBool := modS.Globals["s_bool"]
+	if sBool != py.True {
+		t.Errorf("expected bool(s) to be True, got %v", sBool)
+	}
+
+	// Test 4: Script with shebang
+	srcScriptShebang := `
+from shipyard import Script
+s = Script("""#!/bin/sh
+echo from_shebang
+""")
+s_out = s.stdout
+s_rc = s.returncode
+`
+	modShebang, err := runPySrc(t, interp, srcScriptShebang)
+	if err != nil {
+		t.Fatalf("Script with shebang failed: %v", err)
+	}
+	shebangOut := string(modShebang.Globals["s_out"].(py.String))
+	if !strings.Contains(shebangOut, "from_shebang") {
+		t.Errorf("expected shebang script stdout to contain 'from_shebang', got %q", shebangOut)
+	}
+}
+

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"os"
@@ -21,6 +22,7 @@ var (
 	buildImage        string
 	buildSystem       string
 	buildVersion      string
+	buildDist         string
 	buildOutput       string
 	buildArtifacts    string
 	buildInteractive  bool
@@ -71,7 +73,8 @@ With --local: runs setup() and build() directly on the host without Dagger.`,
 	cmd.Flags().StringVarP(&buildImage, "image", "i", "", "base container image for generic build (defaults to Shipfile BaseImage)")
 	cmd.Flags().StringVarP(&buildSystem, "system", "s", "", "target tracked system name or image on remote server")
 	cmd.Flags().StringVarP(&buildVersion, "version", "v", "", "target version/tag to build ($SHIPYARD_VERSION)")
-	cmd.Flags().StringVarP(&buildOutput, "output", "o", "", "output directory for artifacts (default: build-output)")
+	cmd.Flags().StringVarP(&buildDist, "dist", "d", "dist", "base output directory; artifacts land in <dist>/<name>")
+	cmd.Flags().StringVarP(&buildOutput, "output", "o", "", "full output path for artifacts (overrides --dist)")
 	cmd.Flags().StringVarP(&buildArtifacts, "artifacts", "a", "", "artifact regex pattern")
 	cmd.Flags().BoolVar(&buildInteractive, "interactive", false, "drop into interactive container shell on error")
 	cmd.Flags().BoolVar(&buildNoStream, "no-stream", false, "trigger remote build asynchronously without streaming output")
@@ -151,6 +154,8 @@ func runBuild(cmd *cobra.Command, args []string) error {
 			}
 			copyDir = absCopy
 		}
+	} else if sf.IsBuild() && !sf.IsPatch() && sf.Url == "" {
+		copyDir = sf.Dir
 	}
 
 	version := buildVersion
@@ -159,7 +164,11 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	}
 
 	if buildLocal {
-		if err := runLocalBuild(sf, interp, version, buildOutput, buildArtifacts); err != nil {
+		localOut := buildOutput
+		if localOut == "" {
+			localOut = filepath.Join(buildDist, sf.Name)
+		}
+		if err := runLocalBuild(sf, interp, version, localOut, buildArtifacts); err != nil {
 			return err
 		}
 		return runTests(sf, version)
@@ -187,18 +196,25 @@ func runBuild(cmd *cobra.Command, args []string) error {
 				verbosePtr = &v
 			}
 			reqBody := remoteBuildRequest{
-				Name:            buildName,
-				Shipfile:        string(raw),
-				System:          buildSystem,
-				PackageImage:    buildPackageImage,
-				PackageName:     buildPackageName,
-				Image:           buildImage,
-				Version:         version,
-				ArtifactPattern: buildArtifacts,
-				NoTest:          buildNoTest,
-				Verbose:         verbosePtr,
-				Stream:          !buildNoStream || buildInteractive,
-				Interactive:     buildInteractive,
+				Name:         buildName,
+				Shipfile:     string(raw),
+				System:       buildSystem,
+				PackageImage: buildPackageImage,
+				PackageName:  buildPackageName,
+				Image:        buildImage,
+				Version:      version,
+				NoTest:       buildNoTest,
+				Verbose:      verbosePtr,
+				Stream:       !buildNoStream || buildInteractive,
+				Interactive:  buildInteractive,
+			}
+			if copyDir != "" {
+				archiveBytes, archErr := builder.ArchiveDir(copyDir, nil)
+				if archErr != nil {
+					return fmt.Errorf("bundle source for remote build: %w", archErr)
+				}
+				reqBody.SourceArchive = base64.StdEncoding.EncodeToString(archiveBytes)
+				fmt.Printf("[*] Bundling source (%s) for remote build...\n", copyDir)
 			}
 			fmt.Printf("[*] Building on remote %s...\n", baseURL)
 			return executeRemoteBuildStream(baseURL, tok, reqBody)
@@ -218,31 +234,26 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	defer engine.Close()
 
 	// In-container command stdout always goes to the terminal.
-	// Setup/progress messages (image pull, deps install, etc.) are suppressed unless --verbose.
-	// Build services redirect by setting Output/Stdout/Stderr on the opts directly.
-	progressOut := io.Writer(io.Discard)
-	if globalVerbose {
-		progressOut = os.Stdout
-	}
+	// Step labels and status always go to stderr so they don't pollute artifact stdout.
+	progressOut := io.Writer(os.Stderr)
 
 	if buildPackageImage != "" {
 		outDir := buildOutput
 		if outDir == "" {
 			cleanImg := strings.ReplaceAll(buildPackageImage, ":", "/")
-			outDir = filepath.Join("build-output", cleanImg)
+			outDir = filepath.Join(buildDist, sf.Name, cleanImg)
 		}
 		res, err := builder.BuildPackage(ctx, engine.Client(), sf, buildPackageImage, builder.BuildPackageOpts{
-			PackageName:     buildPackageName,
-			Version:         version,
-			ArtifactPattern: buildArtifacts,
-			OutputDir:       outDir,
-			Interactive:     buildInteractive,
-			NoTest:          buildNoTest,
-			Verbose:         globalVerbose,
-			Output:          progressOut,
-			Stdout:          os.Stdout,
-			Stderr:          os.Stderr,
-			Copy:            copyDir,
+			PackageName: buildPackageName,
+			Version:     version,
+			OutputDir:   outDir,
+			Interactive: buildInteractive,
+			NoTest:      buildNoTest,
+			Verbose:     globalVerbose,
+			Output:      progressOut,
+			Stdout:      os.Stdout,
+			Stderr:      os.Stderr,
+			Copy:        copyDir,
 		})
 		if err != nil {
 			return fmt.Errorf("package build failed: %w", err)
@@ -253,20 +264,19 @@ func runBuild(cmd *cobra.Command, args []string) error {
 
 	outDir := buildOutput
 	if outDir == "" {
-		outDir = filepath.Join("build-output", "standalone", sf.Name)
+		outDir = filepath.Join(buildDist, sf.Name)
 	}
 	res, err := builder.BuildShipfile(ctx, engine.Client(), sf, builder.BuildShipfileOpts{
-		Image:           buildImage,
-		Version:         version,
-		ArtifactPattern: buildArtifacts,
-		OutputDir:       outDir,
-		Interactive:     buildInteractive,
-		NoTest:          buildNoTest,
-		Verbose:         globalVerbose,
-		Output:          progressOut,
-		Stdout:          os.Stdout,
-		Stderr:          os.Stderr,
-		Copy:            copyDir,
+		Image:       buildImage,
+		Version:     version,
+		OutputDir:   outDir,
+		Interactive: buildInteractive,
+		NoTest:      buildNoTest,
+		Verbose:     globalVerbose,
+		Output:      progressOut,
+		Stdout:      os.Stdout,
+		Stderr:      os.Stderr,
+		Copy:        copyDir,
 	})
 	if err != nil {
 		return fmt.Errorf("build failed: %w", err)
@@ -310,7 +320,9 @@ func runLocalBuild(sf *shipfile.Shipfile, interp *shipfile.Interpreter, version,
 		return fmt.Errorf("get working directory: %w", err)
 	}
 	fmt.Printf("[*] Running local build in %s\n", cwd)
-	if err := sf.Build(shipfile.RunContext{SourceDir: cwd, Version: version}); err != nil {
+	rc := shipfile.RunContext{SourceDir: cwd, Version: version}
+	lb := builder.NewLocalBuilder(outDir, globalVerbose)
+	if err := sf.RunWithBuilder(lb, rc); err != nil {
 		return err
 	}
 	if artifactPattern == "" {

@@ -26,7 +26,7 @@ func init() {
 		Methods: []*py.Method{
 			py.MustNewMethod("CodePatch", codePatchFactory, 0, "CodePatch(*files, versions=[], required=True) -> decorator"),
 			py.MustNewMethod("Patch", codePatchFactory, 0, "Alias for CodePatch"),
-			py.MustNewMethod("Run", runFn, 0, "Run(cmd, stdin='') -> RunResult  [build phase only]"),
+			py.MustNewMethod("Run", runFn, 0, "Run(cmd, stdin='') -> RunResult  stdin may be str or bytes  [build phase only]"),
 			py.MustNewMethod("Variable", variableFactory, 0, "Variable(name, description='', value='', validate=None) -> Variable"),
 			py.MustNewMethod("get_variables", getVariablesFn, 0, "get_variables(shipfile) -> list[dict]"),
 			py.MustNewMethod("test", testFactory, 0, "test(name='', description='') -> decorator"),
@@ -34,6 +34,17 @@ func init() {
 			py.MustNewMethod("_get_class", getClassFn, 0, "_get_class(obj_or_cls) -> class"),
 			py.MustNewMethod("_has_own_attr", hasOwnAttrFn, 0, "_has_own_attr(obj_or_cls, attr) -> bool"),
 			// validate is defined in builtins.py as a module-level function
+			// Builder container primitives — only active when a DaggerBuilder is set.
+			py.MustNewMethod("From", fromFn, 0, "From(image) / From(image, 'name') → set base image; multi-stage requires names [Builder]"),
+			py.MustNewMethod("Use", useFn, 0, "Use('name') → switch active container to a named stage [Builder]"),
+			py.MustNewMethod("Copy", copyFn, 0, "Copy('src', dst='.') / Copy('stage:src', dst='.') → copy from ContextBundle or named stage [Builder]"),
+			py.MustNewMethod("Write", writeFn, 0, "Write(path, content) → write a file into the active container [Builder]"),
+			py.MustNewMethod("Workdir", workdirFn, 0, "Workdir(path) → set the working directory [Builder]"),
+			py.MustNewMethod("Script", scriptFn, 0, "Script('...') → run a multiline shell script [build phase only]"),
+			py.MustNewMethod("Env", envFn, 0, "Env(key, value) → set an environment variable [Builder]"),
+			py.MustNewMethod("User", userFn, 0, "User(name) → set the running user [Builder]"),
+			py.MustNewMethod("Dockerfile", dockerfileFn, 0, "Dockerfile('...') → build from an inline Dockerfile using ContextBundle [Builder]"),
+			py.MustNewMethod("Save", saveFn, 0, "Save(src, dst) → export file/dir to artifacts; src may be 'stage:path' [Builder]"),
 		},
 		CodeSrc: codeSrc,
 	})

@@ -1,6 +1,7 @@
 package shipfile
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"os"
@@ -42,6 +43,7 @@ type Shipfile struct {
 	HasPostPatch      bool
 	HasSetup          bool
 	HasBuild          bool
+	HasSave           bool
 	HasTests          bool
 	HasPreTest        bool
 	HasPostTest       bool
@@ -85,15 +87,12 @@ func (s *Shipfile) ValidateVariable(name, value string) error {
 	return fmt.Errorf("unknown variable %q", name)
 }
 
-// VariablesMap returns a validated map[string]string of all variables, applying any overrides.
+// VariablesMap returns a map[name]value for all variables, applying any overrides.
 func (s *Shipfile) VariablesMap(overrides ...map[string]string) (map[string]string, error) {
 	out := make(map[string]string, len(s.Variables))
 	byName := make(map[string]*shipmod.Variable, len(s.Variables))
 	for i := range s.Variables {
 		v := &s.Variables[i]
-		if err := v.Validate(v.Value); err != nil {
-			return nil, err
-		}
 		out[v.Name] = v.Value
 		byName[v.Name] = v
 	}
@@ -112,18 +111,41 @@ func (s *Shipfile) VariablesMap(overrides ...map[string]string) (map[string]stri
 	return out, nil
 }
 
-// NewContext creates a Python shipyard.Context object with version and ctx.variables dict populated.
+// NewContext creates a Python shipyard.Context object with version and ctx.variables populated as a dict.
+// All variable values are validated and resolved before the Context object is returned.
 func (s *Shipfile) NewContext(version string, overrides ...map[string]string) (py.Object, error) {
 	if s.interp == nil {
 		return nil, fmt.Errorf("shipfile interpreter is not initialized")
 	}
-	varsMap, err := s.VariablesMap(overrides...)
-	if err != nil {
-		return nil, err
+
+	// Build a name→value override map and check for unknown variables.
+	overrideMap := make(map[string]string)
+	byName := make(map[string]*shipmod.Variable, len(s.Variables))
+	for i := range s.Variables {
+		byName[s.Variables[i].Name] = &s.Variables[i]
 	}
+	for _, ov := range overrides {
+		for k, val := range ov {
+			if _, exists := byName[k]; !exists {
+				return nil, fmt.Errorf("unknown variable %q", k)
+			}
+			overrideMap[k] = val
+		}
+	}
+
+	// Build a Python dict of variable name -> validated and resolved value.
 	varsDict := py.NewStringDict()
-	for k, v := range varsMap {
-		varsDict[k] = py.String(v)
+	for i := range s.Variables {
+		v := &s.Variables[i]
+		val := v.Value
+		if ovVal, ok := overrideMap[v.Name]; ok {
+			val = ovVal
+		}
+		resolved, err := v.ValidateAndResolve(val)
+		if err != nil {
+			return nil, err
+		}
+		varsDict[v.Name] = resolved
 	}
 
 	ctxCls, err := s.interp.GetShipyardAttr("Context")
@@ -521,6 +543,29 @@ func (s *Shipfile) GetVariable(name string) (VariableDef, bool) {
 	return VariableDef{}, false
 }
 
+// fstringRe matches the start of an f-string token (f" f' F" F' with optional triple quotes).
+// A negative lookbehind is emulated by requiring a non-identifier character before the f/F.
+var fstringRe = regexp.MustCompile(`(?:^|[^a-zA-Z0-9_])([fF](?:"""|'''|"|'))`)
+
+// checkFStrings returns a descriptive error if source contains any f-string
+// literals. gpython does not support them; use str.format() or % formatting.
+func checkFStrings(source string) error {
+	for i, line := range strings.Split(source, "\n") {
+		stripped := strings.TrimSpace(line)
+		if strings.HasPrefix(stripped, "#") {
+			continue
+		}
+		// Strip trailing inline comment (best-effort; doesn't handle # inside strings).
+		if idx := strings.Index(stripped, " #"); idx >= 0 {
+			stripped = stripped[:idx]
+		}
+		if fstringRe.MatchString(stripped) {
+			return fmt.Errorf("line %d: f-strings are not supported (gpython does not implement them); use str.format() or %%-formatting instead:\n  %s", i+1, strings.TrimSpace(line))
+		}
+	}
+	return nil
+}
+
 // Find looks for a shipfile.py starting at dir and checking common candidate locations.
 func Find(dir string) (string, error) {
 	if dir == "" {
@@ -553,6 +598,14 @@ func Load(path string, interp *Interpreter) (*Shipfile, error) {
 		return nil, err
 	}
 
+	raw, err := os.ReadFile(absPath)
+	if err != nil {
+		return nil, fmt.Errorf("read shipfile %s: %w", absPath, err)
+	}
+	if err := checkFStrings(string(raw)); err != nil {
+		return nil, fmt.Errorf("%s: %w", absPath, err)
+	}
+
 	mod, err := interp.RunShipfile(absPath)
 	if err != nil {
 		py.TracebackDump(err)
@@ -564,6 +617,9 @@ func Load(path string, interp *Interpreter) (*Shipfile, error) {
 
 // LoadString parses a shipfile from string content using the provided interpreter.
 func LoadString(content string, interp *Interpreter) (*Shipfile, error) {
+	if err := checkFStrings(content); err != nil {
+		return nil, fmt.Errorf("shipfile.py: %w", err)
+	}
 	code, err := py.Compile(content+"\n", "shipfile.py", py.ExecMode, 0, true)
 	if err != nil {
 		return nil, fmt.Errorf("compile shipfile: %w", err)
@@ -676,6 +732,9 @@ func loadModule(mod *py.Module, absPath string, interp *Interpreter) (*Shipfile,
 			}
 			if _, ok := dict["build"]; ok {
 				sf.HasBuild = true
+			}
+			if _, ok := dict["save"]; ok {
+				sf.HasSave = true
 			}
 			if _, ok := dict["package_name"]; ok {
 				sf.HasPackageName = true
@@ -1032,12 +1091,9 @@ func currentRunDepth() string {
 	return "0"
 }
 
-// Build invokes the shipfile's setup() and build() methods (or Setup/Build
-// shell strings if no Python methods are defined). Both execution and file read
-// are enabled for the duration of the call and restored afterwards.
-func (s *Shipfile) Build(ctx RunContext) error {
+func (s *Shipfile) enableBuildSandbox() (func(), error) {
 	if s.interp == nil {
-		return fmt.Errorf("shipfile interpreter is not initialized")
+		return nil, fmt.Errorf("shipfile interpreter is not initialized")
 	}
 	sb := s.interp.Sandbox()
 	prevExec := sb.ExecutionEnabled()
@@ -1045,19 +1101,109 @@ func (s *Shipfile) Build(ctx RunContext) error {
 	sb.SetExecution(true)
 	sb.SetFileRead(true)
 	sb.SetEnv(map[string]string{shipmod.RunDepthEnv: currentRunDepth()})
-	defer func() {
+	return func() {
 		sb.SetExecution(prevExec)
 		sb.SetFileRead(prevFileRead)
-	}()
+	}, nil
+}
 
-	overrides := ctx.overrides()
+// Setup invokes the shipfile's setup() method. Execution and file read are enabled
+// for the duration of the call and restored afterwards.
+func (s *Shipfile) Setup(ctx RunContext) error {
+	cleanup, err := s.enableBuildSandbox()
+	if err != nil {
+		return err
+	}
+	defer cleanup()
 	if s.HasSetup {
-		if err := s.CallMethod(nil, "setup", overrides...); err != nil {
+		if err := s.CallMethod(nil, "setup", ctx.overrides()...); err != nil {
 			return fmt.Errorf("setup failed: %w", err)
 		}
 	}
+	return nil
+}
+
+// RunWithBuilder sets b as the active ContainerBuilder and drives the
+// shipfile's build lifecycle on the host side: setup() (if defined) then
+// build(). Every shipyard.From/Run/Copy/Write/Source/Workdir call inside those
+// methods routes through b to accumulate Dagger layers rather than executing
+// locally. The caller reads the resulting container from b after this returns.
+func (s *Shipfile) RunWithBuilder(b shipmod.ContainerBuilder, ctx RunContext) error {
+	cleanup, err := s.enableBuildSandbox()
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	shipmod.SetActiveBuilder(b)
+	defer shipmod.ClearActiveBuilder()
+
+	if s.HasSetup {
+		if err := s.CallMethod(nil, "setup", ctx.overrides()...); err != nil {
+			return fmt.Errorf("setup: %w", err)
+		}
+	}
 	if s.HasBuild {
-		if err := s.CallMethod(nil, "build", overrides...); err != nil {
+		if err := s.CallMethod(nil, "build", ctx.overrides()...); err != nil {
+			return fmt.Errorf("build: %w", err)
+		}
+	}
+	if s.HasSave {
+		if err := s.CallMethod(nil, "save", ctx.overrides()...); err != nil {
+			return fmt.Errorf("save: %w", err)
+		}
+	}
+	return nil
+}
+
+// RunSaveWithBuilder is the Packer equivalent of the save() step. It sets b as
+// the active builder (with workdir already pointing at the artifact directory),
+// then calls save() so the shipfile can declare what to export via Save().
+func (s *Shipfile) RunSaveWithBuilder(b shipmod.ContainerBuilder, ctx RunContext) error {
+	if !s.HasSave {
+		return nil
+	}
+	shipmod.SetActiveBuilder(b)
+	defer shipmod.ClearActiveBuilder()
+	if err := s.CallMethod(nil, "save", ctx.overrides()...); err != nil {
+		return fmt.Errorf("save: %w", err)
+	}
+	return nil
+}
+
+// SetupHash runs setup() in recording mode — Run() and Script() calls are
+// captured rather than executed — and returns a SHA-256 hex digest of the
+// captured commands. The hash changes only when the commands inside setup()
+// change, not when @CodePatch or other unrelated methods are edited.
+// Note: data-dependent branching on Run() output is not captured; the hash
+// reflects the commands that would be reached with empty stdout/returncode=0.
+func (s *Shipfile) SetupHash(ctx RunContext) (string, error) {
+	if !s.HasSetup {
+		return "", nil
+	}
+	shipmod.StartRecording()
+	err := s.CallMethod(nil, "setup", ctx.overrides()...)
+	cmds := shipmod.StopRecording()
+	if err != nil {
+		return "", fmt.Errorf("setup hash: %w", err)
+	}
+	h := sha256.New()
+	for _, cmd := range cmds {
+		fmt.Fprintln(h, cmd)
+	}
+	return fmt.Sprintf("%x", h.Sum(nil)), nil
+}
+
+// Build invokes the shipfile's build() method. Execution and file read are enabled
+// for the duration of the call and restored afterwards.
+func (s *Shipfile) Build(ctx RunContext) error {
+	cleanup, err := s.enableBuildSandbox()
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	if s.HasBuild {
+		if err := s.CallMethod(nil, "build", ctx.overrides()...); err != nil {
 			return fmt.Errorf("build failed: %w", err)
 		}
 	}

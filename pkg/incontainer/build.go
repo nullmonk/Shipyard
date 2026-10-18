@@ -10,6 +10,18 @@ import (
 	"shipyard/pkg/shipfile"
 )
 
+func newSetupCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "setup",
+		Short: "Run the setup step (install dependencies, prepare environment)",
+		Long: `Setup runs the Shipfile's setup() method to prepare the build environment.
+This step runs before source is available and is cached by Dagger independently
+of the source tree.`,
+		Args: cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error { return runGenericSetup() },
+	}
+}
+
 func newBuildCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "build",
@@ -36,6 +48,31 @@ func runContainerBuild(_ *cobra.Command, _ []string) error {
 	default:
 		return fmt.Errorf("unknown SHIPYARD_MODE %q (expected 'build' or 'package')", mode)
 	}
+}
+
+func runGenericSetup() error {
+	sfPath, err := getShipfilePath()
+	if err != nil {
+		return err
+	}
+	interp, err := getInterpreter()
+	if err != nil {
+		return fmt.Errorf("init interpreter: %w", err)
+	}
+	defer interp.Close()
+
+	sf, err := shipfile.Load(sfPath, interp)
+	if err != nil {
+		return fmt.Errorf("load shipfile: %w", err)
+	}
+
+	version := os.Getenv("SHIPYARD_VERSION")
+
+	if err := sf.Setup(shipfile.RunContext{Version: version}); err != nil {
+		return err
+	}
+	fmt.Println("[+] Setup completed")
+	return nil
 }
 
 func runGenericBuild() error {

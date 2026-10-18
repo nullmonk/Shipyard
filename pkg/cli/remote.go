@@ -76,12 +76,14 @@ type remoteBuildRequest struct {
 	PackageName     string `json:"package_name"`
 	Image           string `json:"image"`
 	Version         string `json:"version"`
-	ArtifactPattern string `json:"artifacts"`
 	NoTest          bool   `json:"no_test"`
 	Verbose         *bool  `json:"verbose,omitempty"`
 	Stream          bool   `json:"stream"`
 	Interactive     bool   `json:"interactive"`
 	ShellOnly       bool   `json:"shell_only"`
+	// SourceArchive is a base64-encoded gzip tar of the local source directory,
+	// sent when the shipfile has no Url and copy mode is active.
+	SourceArchive string `json:"source_archive,omitempty"`
 }
 
 type remoteBuildResponse struct {
@@ -516,7 +518,6 @@ func newRemoteCmd() *cobra.Command {
 		rbImage       string
 		rbSystem      string
 		rbVersion     string
-		rbArtifacts   string
 		rbNoTest      bool
 		rbVerbose     bool
 		rbInteractive bool
@@ -555,18 +556,17 @@ func newRemoteCmd() *cobra.Command {
 			}
 
 			reqBody := remoteBuildRequest{
-				Name:            rbName,
-				Shipfile:        content,
-				System:          rbSystem,
-				PackageImage:    rbPackage,
-				PackageName:     rbPackageName,
-				Image:           rbImage,
-				Version:         rbVersion,
-				ArtifactPattern: rbArtifacts,
-				NoTest:          rbNoTest,
-				Verbose:         verbosePtr,
-				Stream:          !rbNoStream || rbInteractive,
-				Interactive:     rbInteractive,
+				Name:        rbName,
+				Shipfile:    content,
+				System:      rbSystem,
+				PackageImage: rbPackage,
+				PackageName: rbPackageName,
+				Image:       rbImage,
+				Version:     rbVersion,
+				NoTest:      rbNoTest,
+				Verbose:     verbosePtr,
+				Stream:      !rbNoStream || rbInteractive,
+				Interactive: rbInteractive,
 			}
 
 			return executeRemoteBuildStream(baseURL, tok, reqBody)
@@ -578,7 +578,6 @@ func newRemoteCmd() *cobra.Command {
 	buildCmd.Flags().StringVarP(&rbImage, "image", "i", "", "base container image for generic build")
 	buildCmd.Flags().StringVarP(&rbSystem, "system", "s", "", "target tracked system name or image")
 	buildCmd.Flags().StringVarP(&rbVersion, "version", "v", "", "target version/tag to build")
-	buildCmd.Flags().StringVarP(&rbArtifacts, "artifacts", "a", "", "artifact regex pattern")
 	buildCmd.Flags().BoolVar(&rbNoTest, "no-test", false, "skip running tests defined in shipfile")
 	buildCmd.Flags().BoolVarP(&rbVerbose, "verbose", "V", false, "enable verbose Shipyard build output")
 	buildCmd.Flags().BoolVar(&rbInteractive, "interactive", false, "drop into interactive remote container shell on error")

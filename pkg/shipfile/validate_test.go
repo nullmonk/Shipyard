@@ -133,7 +133,7 @@ class Shipfile:
 }
 
 func TestValidatePatcherRequirements(t *testing.T) {
-	// 1. Patcher with CodePatch
+	// 1. Patcher with CodePatch and save()
 	sfWithCodePatch := loadShipfileContent(t, `
 from shipyard import Patcher, CodePatch
 
@@ -144,12 +144,14 @@ class Shipfile(Patcher):
     @CodePatch(r".*\.c$")
     def patch_it(file, version):
         pass
+
+    def save(self, ctx): pass
 `)
 	if err := sfWithCodePatch.Validate(); err != nil {
 		t.Errorf("expected valid for Patcher with CodePatch, got: %v", err)
 	}
 
-	// 2. Patcher with pre_patch method
+	// 2. Patcher with pre_patch and save()
 	sfWithPrePatch := loadShipfileContent(t, `
 from shipyard import Patcher
 
@@ -157,14 +159,14 @@ class Shipfile(Patcher):
     Name = "test"
     PackageName = "test-pkg"
 
-    def pre_patch(self, ctx):
-        pass
+    def pre_patch(self, ctx): pass
+    def save(self, ctx): pass
 `)
 	if err := sfWithPrePatch.Validate(); err != nil {
 		t.Errorf("expected valid for Patcher with pre_patch, got: %v", err)
 	}
 
-	// 3. Patcher with post_patch method
+	// 3. Patcher with post_patch and save()
 	sfWithPostPatch := loadShipfileContent(t, `
 from shipyard import Patcher
 
@@ -172,8 +174,8 @@ class Shipfile(Patcher):
     Name = "test"
     PackageName = "test-pkg"
 
-    def post_patch(self, ctx):
-        pass
+    def post_patch(self, ctx): pass
+    def save(self, ctx): pass
 `)
 	if err := sfWithPostPatch.Validate(); err != nil {
 		t.Errorf("expected valid for Patcher with post_patch, got: %v", err)
@@ -186,79 +188,69 @@ from shipyard import Patcher
 class Shipfile(Patcher):
     Name = "test"
     PackageName = "test-pkg"
+
+    def save(self, ctx): pass
 `)
 	if err := sfEmptyPatcher.Validate(); err == nil {
 		t.Errorf("expected error for Patcher without patch logic, got nil")
 	}
+
+	// 5. Patcher with CodePatch but no save() (should fail)
+	sfNoSave := loadShipfileContent(t, `
+from shipyard import Patcher, CodePatch
+
+class Shipfile(Patcher):
+    Name = "test"
+    PackageName = "test-pkg"
+
+    @CodePatch(r".*\.c$")
+    def patch_it(file, version):
+        pass
+`)
+	if err := sfNoSave.Validate(); err == nil {
+		t.Errorf("expected error for Patcher without save(), got nil")
+	}
 }
 
 func TestValidateBuilderRequirements(t *testing.T) {
-	// 1. Valid Builder with Artifacts and build() method
-	sfBuildScript := loadShipfileContent(t, `
+	// 1. Valid Builder with build() and save()
+	sfBuildSave := loadShipfileContent(t, `
 from shipyard import Builder
 
 class Shipfile(Builder):
     Name = "test"
     PackageName = "test-pkg"
-    Artifacts = r"^bin/app$"
 
     def build(self, ctx):
         pass
+
+    def save(self, ctx):
+        pass
 `)
-	if err := sfBuildScript.Validate(); err != nil {
-		t.Errorf("expected valid for Builder with Build, got: %v", err)
+	if err := sfBuildSave.Validate(); err != nil {
+		t.Errorf("expected valid for Builder with build+save, got: %v", err)
 	}
 
-	// 2. Valid Builder with Artifacts and setup() method
-	sfSetupScript := loadShipfileContent(t, `
+	// 2. Valid Builder with setup() and save()
+	sfSetupSave := loadShipfileContent(t, `
 from shipyard import Builder
 
 class Shipfile(Builder):
     Name = "test"
     PackageName = "test-pkg"
-    Artifacts = r"^bin/app$"
 
     def setup(self, ctx):
         pass
-`)
-	if err := sfSetupScript.Validate(); err != nil {
-		t.Errorf("expected valid for Builder with Setup, got: %v", err)
-	}
 
-	// 3. Valid Builder with build method
-	sfBuildMethod := loadShipfileContent(t, `
-from shipyard import Builder
-
-class Shipfile(Builder):
-    Name = "test"
-    PackageName = "test-pkg"
-    Artifacts = r"^bin/app$"
-
-    def build(self, ctx):
+    def save(self, ctx):
         pass
 `)
-	if err := sfBuildMethod.Validate(); err != nil {
-		t.Errorf("expected valid for Builder with build method, got: %v", err)
+	if err := sfSetupSave.Validate(); err != nil {
+		t.Errorf("expected valid for Builder with setup+save, got: %v", err)
 	}
 
-	// 4. Valid Builder with setup method
-	sfSetupMethod := loadShipfileContent(t, `
-from shipyard import Builder
-
-class Shipfile(Builder):
-    Name = "test"
-    PackageName = "test-pkg"
-    Artifacts = r"^bin/app$"
-
-    def setup(self, ctx):
-        pass
-`)
-	if err := sfSetupMethod.Validate(); err != nil {
-		t.Errorf("expected valid for Builder with setup method, got: %v", err)
-	}
-
-	// 5. Invalid Builder: missing Artifacts
-	sfNoArtifacts := loadShipfileContent(t, `
+	// 3. Valid Builder: save() is not required; Save() calls in build() suffice
+	sfNoSave := loadShipfileContent(t, `
 from shipyard import Builder
 
 class Shipfile(Builder):
@@ -268,34 +260,20 @@ class Shipfile(Builder):
     def build(self, ctx):
         pass
 `)
-	if err := sfNoArtifacts.Validate(); err == nil {
-		t.Errorf("expected error for Builder missing Artifacts, got nil")
+	if err := sfNoSave.Validate(); err != nil {
+		t.Errorf("expected valid for Builder without save(), got: %v", err)
 	}
 
-	// 6. Invalid Builder: invalid regex in Artifacts
-	sfBadRegex := loadShipfileContent(t, `
-from shipyard import Builder
-
-class Shipfile(Builder):
-    Name = "test"
-    PackageName = "test-pkg"
-    Artifacts = r"[a-z("
-
-    def build(self, ctx):
-        pass
-`)
-	if err := sfBadRegex.Validate(); err == nil {
-		t.Errorf("expected error for Builder with invalid regex, got nil")
-	}
-
-	// 7. Invalid Builder: neither setup nor build
+	// 4. Invalid Builder: neither setup nor build
 	sfNoStep := loadShipfileContent(t, `
 from shipyard import Builder
 
 class Shipfile(Builder):
     Name = "test"
     PackageName = "test-pkg"
-    Artifacts = r"^bin/app$"
+
+    def save(self, ctx):
+        pass
 `)
 	if err := sfNoStep.Validate(); err == nil {
 		t.Errorf("expected error for Builder without setup or build, got nil")
@@ -310,13 +288,15 @@ from shipyard import Patcher, Builder, CodePatch
 class Shipfile(Patcher, Builder):
     Name = "test"
     PackageName = "test-pkg"
-    Artifacts = r"^bin/app$"
 
     @CodePatch(r".*\.c$")
     def patch_it(file, version):
         pass
 
     def build(self, ctx):
+        pass
+
+    def save(self, ctx):
         pass
 `)
 	if err := sfBothValid.Validate(); err != nil {
@@ -330,9 +310,11 @@ from shipyard import Patcher, Builder
 class Shipfile(Patcher, Builder):
     Name = "test"
     PackageName = "test-pkg"
-    Artifacts = r"^bin/app$"
 
     def build(self, ctx):
+        pass
+
+    def save(self, ctx):
         pass
 `)
 	if err := sfMissingPatch.Validate(); err == nil {
@@ -346,14 +328,35 @@ from shipyard import Patcher, Builder, CodePatch
 class Shipfile(Patcher, Builder):
     Name = "test"
     PackageName = "test-pkg"
-    Artifacts = r"^bin/app$"
 
     @CodePatch(r".*\.c$")
     def patch_it(file, version):
         pass
+
+    def save(self, ctx):
+        pass
 `)
 	if err := sfMissingBuild.Validate(); err == nil {
 		t.Errorf("expected error for dual class missing build step, got nil")
+	}
+
+	// Subclasses both, but missing save()
+	sfMissingSave := loadShipfileContent(t, `
+from shipyard import Patcher, Builder, CodePatch
+
+class Shipfile(Patcher, Builder):
+    Name = "test"
+    PackageName = "test-pkg"
+
+    @CodePatch(r".*\.c$")
+    def patch_it(file, version):
+        pass
+
+    def build(self, ctx):
+        pass
+`)
+	if err := sfMissingSave.Validate(); err == nil {
+		t.Errorf("expected error for dual class missing save(), got nil")
 	}
 }
 
@@ -365,8 +368,8 @@ from shipyard import Builder, Variable
 class Shipfile(Builder):
     Name = "test"
     PackageName = "test-pkg"
-    Artifacts = r"^bin/app$"
     def build(self, ctx): pass
+    def save(self, ctx): pass
 
     Variables = [
         Variable("MY_VAR", "My description", "valid_string"),
@@ -394,8 +397,8 @@ def check_val(v):
 class Shipfile(Builder):
     Name = "test"
     PackageName = "test-pkg"
-    Artifacts = r"^bin/app$"
     def build(self, ctx): pass
+    def save(self, ctx): pass
 
     Variables = [
         Variable("MY_VAR", "My description", "valid", validate=check_val),
@@ -405,7 +408,7 @@ class Shipfile(Builder):
 		t.Errorf("expected valid validator to pass, got: %v", err)
 	}
 
-	// 3. Variable with validator returning error string (invalid)
+	// 3. Variable with validator that raises (invalid)
 	dir, err := os.MkdirTemp("", "shipfile-val-err-*")
 	if err != nil {
 		t.Fatal(err)
@@ -416,13 +419,13 @@ class Shipfile(Builder):
 from shipyard import Builder, Variable
 
 def check_val(v):
-    return "bad value supplied"
+    raise ValueError("bad value supplied")
 
 class Shipfile(Builder):
     Name = "test"
     PackageName = "test-pkg"
-    Artifacts = r"^bin/app$"
     def build(self, ctx): pass
+    def save(self, ctx): pass
 
     Variables = [
         Variable("MY_VAR", "My description", "test", validate=check_val),
@@ -430,7 +433,7 @@ class Shipfile(Builder):
 `), 0o644)
 	root, _ := filepath.Abs("../..")
 	if _, err := shipfile.LoadDefault(sfErrPath, root); err == nil {
-		t.Errorf("expected error when validator returns error string, got nil")
+		t.Errorf("expected error when validator raises, got nil")
 	}
 
 	// 4. Non-string variable value must fail
@@ -441,8 +444,8 @@ from shipyard import Builder, Variable
 class Shipfile(Builder):
     Name = "test"
     PackageName = "test-pkg"
-    Artifacts = r"^bin/app$"
     def build(self, ctx): pass
+    def save(self, ctx): pass
 
     Variables = [
         Variable("MY_VAR", "My description", 12345),
@@ -477,6 +480,8 @@ class Shipfile(Patcher):
     @CodePatch(r".*main\.c$")
     def apply_banner(file, ctx):
         file.replace("DEFAULT", ctx.variables["BANNER"])
+
+    def save(self, ctx): pass
 `, interp)
 	if err != nil {
 		t.Fatalf("ValidateString failed: %v", err)

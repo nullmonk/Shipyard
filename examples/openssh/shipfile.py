@@ -25,7 +25,7 @@ Or just build it directly with Dagger:
 
 import re
 
-from shipyard import CodePatch, CodeFile, Version, Patcher, Variable
+from shipyard import CodePatch, CodeFile, Version, Patcher, Variable, Save
 
 # Matches the modern "V_<major>_<minor>_P<portable>" tag scheme (e.g. V_9_9_P2,
 # V_10_6_P1). Older releases used messier schemes (V_1_2_3_PRE5, V_2_0_0_BETA1,
@@ -87,6 +87,9 @@ class Shipfile(Patcher):
             # that is_version_ignored() will drop.
             return "0.0"
         return "{}.{}p{}".format(m.group("major"), m.group("minor"), m.group("portable"))
+
+    def save(self, ctx):
+        Save("openssh-server_*.deb", "openssh-server.deb")
 
     @staticmethod
     def version_to_tag(v):

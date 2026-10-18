@@ -3,6 +3,7 @@ package builder
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -115,7 +116,11 @@ func fdIsSet(fd int, set *syscall.FdSet) bool {
 // dropIntoShell opens an interactive PTY shell in ctr by forwarding a temporary
 // host Unix socket into the container and running `shipyard shell`. This works
 // directly in standard terminals without requiring the Dagger CLI TUI (`dagger run`).
-func dropIntoShell(ctx context.Context, client *dagger.Client, w io.Writer, ctr *dagger.Container) {
+func dropIntoShell(ctx context.Context, client *dagger.Client, w io.Writer, ctr *dagger.Container, sfDir ...string) {
+	if ctr == nil {
+		fmt.Fprintln(w, "[!] Cannot open interactive shell: container is nil")
+		return
+	}
 	fmt.Fprintln(w, "[!] Dropping into interactive shell...")
 	if client == nil {
 		if _, err := ctr.Terminal(dagger.ContainerTerminalOpts{Cmd: []string{"/bin/bash"}}).Sync(ctx); err != nil {
@@ -123,6 +128,17 @@ func dropIntoShell(ctx context.Context, client *dagger.Client, w io.Writer, ctr 
 		}
 		return
 	}
+
+	var dir string
+	if len(sfDir) > 0 {
+		dir = sfDir[0]
+	}
+	self, err := findContainerBinary(dir)
+	if err != nil {
+		fmt.Fprintf(w, "[!] Could not resolve shipyard binary for interactive shell: %v\n", err)
+		return
+	}
+	selfFile := client.Host().File(self)
 
 	tmpDir, err := os.MkdirTemp("", "sy-sh-*")
 	if err != nil {
@@ -229,10 +245,12 @@ func dropIntoShell(ctx context.Context, client *dagger.Client, w io.Writer, ctr 
 	containerSock := "/tmp/.shipyard-shell.sock"
 
 	_, err = ctr.
+		WithFile("/usr/local/bin/shipyard", selfFile, dagger.ContainerWithFileOpts{Permissions: 0o755}).
+		WithEnvVariable("SHIPYARD_IN_CONTAINER", "1").
 		WithEnvVariable("TERM", term).
 		WithVolatileVariable("SHIPYARD_SHELL_NONCE", fmt.Sprintf("%d", time.Now().UnixNano())).
 		WithUnixSocket(containerSock, hostSock).
-		WithExec([]string{"shipyard", "shell", containerSock}).
+		WithExec([]string{"/usr/local/bin/shipyard", "shell", containerSock}).
 		Sync(ctx)
 
 	_ = ln.Close()
@@ -240,6 +258,15 @@ func dropIntoShell(ctx context.Context, client *dagger.Client, w io.Writer, ctr 
 	restoreTermios(stdinFd, origTerm)
 
 	if err != nil {
+		var execErr *dagger.ExecError
+		if errors.As(err, &execErr) {
+			if execErr.Stderr != "" {
+				fmt.Fprint(w, execErr.Stderr)
+			}
+			if execErr.Stdout != "" {
+				fmt.Fprint(w, execErr.Stdout)
+			}
+		}
 		fmt.Fprintf(w, "\n[!] Interactive shell exited with error: %v\n", err)
 	}
 }

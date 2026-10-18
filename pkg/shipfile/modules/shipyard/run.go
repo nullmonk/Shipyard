@@ -49,6 +49,33 @@ var (
 	executionChecker   func(py.Context) bool
 )
 
+var (
+	runRecorderMu sync.Mutex
+	runRecorded   []string
+	runRecording  bool
+)
+
+// StartRecording enables recording mode: subsequent Run() calls are captured
+// rather than executed and return an empty RunResult.
+func StartRecording() {
+	runRecorderMu.Lock()
+	defer runRecorderMu.Unlock()
+	runRecorded = nil
+	runRecording = true
+}
+
+// StopRecording disables recording mode and returns the captured entries.
+// Each entry is "cmd" or "cmd\x00stdin" for calls that included stdin.
+func StopRecording() []string {
+	runRecorderMu.Lock()
+	defer runRecorderMu.Unlock()
+	runRecording = false
+	out := make([]string, len(runRecorded))
+	copy(out, runRecorded)
+	runRecorded = nil
+	return out
+}
+
 // SetExecutionChecker registers the Go callback used to authorize Run().
 func SetExecutionChecker(fn func(py.Context) bool) {
 	executionCheckerMu.Lock()
@@ -108,10 +135,6 @@ func runFn(self py.Object, args py.Tuple, kwargs py.StringDict) (py.Object, erro
 	if !ok {
 		return nil, py.ExceptionNewf(py.SystemError, "Run() called with unexpected self type")
 	}
-	if !isExecutionAllowed(mod.Context) {
-		return nil, py.ExceptionNewf(py.PermissionError,
-			"shipyard.Run() is only available during build and test phases (setup/build/test)")
-	}
 
 	if len(args) < 1 {
 		return nil, py.ExceptionNewf(py.TypeError, "Run() requires a cmd argument")
@@ -149,19 +172,73 @@ func runFn(self py.Object, args py.Tuple, kwargs py.StringDict) (py.Object, erro
 		return nil, py.ExceptionNewf(py.ValueError, "Run() cmd must not be empty")
 	}
 
-	stdinStr := ""
+	var stdinReader io.Reader
+	var stdinStr string
+	stdinDisplay := ""
+	parseStdin := func(obj py.Object) error {
+		switch s := obj.(type) {
+		case py.String:
+			if len(s) > 0 {
+				stdinReader = strings.NewReader(string(s))
+				stdinStr = string(s)
+				stdinDisplay = string(s)
+			}
+		case py.Bytes:
+			stdinReader = bytes.NewReader([]byte(s))
+			stdinStr = string(s)
+			stdinDisplay = fmt.Sprintf("<stdin: %d bytes>", len(s))
+		default:
+			return py.ExceptionNewf(py.TypeError, "Run() stdin must be a string or bytes")
+		}
+		return nil
+	}
 	if len(args) >= 2 {
-		s, ok := args[1].(py.String)
-		if !ok {
-			return nil, py.ExceptionNewf(py.TypeError, "Run() stdin must be a string")
+		if err := parseStdin(args[1]); err != nil {
+			return nil, err
 		}
-		stdinStr = string(s)
 	} else if s, ok := kwargs["stdin"]; ok {
-		str, ok := s.(py.String)
-		if !ok {
-			return nil, py.ExceptionNewf(py.TypeError, "Run() stdin must be a string")
+		if err := parseStdin(s); err != nil {
+			return nil, err
 		}
-		stdinStr = string(str)
+	}
+
+	// Recording mode: capture commands without executing (for SetupHash).
+	runRecorderMu.Lock()
+	if runRecording {
+		entry := displayCmd
+		if stdinDisplay != "" {
+			entry += "\x00" + stdinDisplay
+		}
+		runRecorded = append(runRecorded, entry)
+		runRecorderMu.Unlock()
+		return &RunResult{}, nil
+	}
+	runRecorderMu.Unlock()
+
+	// Dagger mode: route through the active ContainerBuilder (host-side Builder builds).
+	if b := GetActiveBuilder(); b != nil {
+		stdout, stderr, rc, runErr := b.Run(argv, stdinStr)
+		if runErr != nil {
+			return nil, py.ExceptionNewf(py.RuntimeError, "Run(%q): %v", displayCmd, runErr)
+		}
+		check := true
+		if c, ok := kwargs["check"]; ok {
+			check = (c != py.False && c != py.None)
+		}
+		if check && rc != 0 {
+			return nil, py.ExceptionNewf(py.RuntimeError,
+				"Command %q failed with exit code %d\n%s", displayCmd, rc, stderr)
+		}
+		return &RunResult{Stdout: stdout, Stderr: stderr, ReturnCode: rc}, nil
+	}
+
+	return executeHostCommand(mod.Context, argv, displayCmd, stdinReader, stdinDisplay, kwargs, "Run")
+}
+
+func executeHostCommand(ctx py.Context, argv []string, displayCmd string, stdinReader io.Reader, stdinDisplay string, kwargs py.StringDict, opName string) (*RunResult, error) {
+	if !isExecutionAllowed(ctx) {
+		return nil, py.ExceptionNewf(py.PermissionError,
+			"shipyard.%s() is only available during build and test phases (setup/build/test)", opName)
 	}
 
 	env, err := envWithIncrementedDepth()
@@ -170,25 +247,27 @@ func runFn(self py.Object, args py.Tuple, kwargs py.StringDict) (py.Object, erro
 	}
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Env = env
-	if stdinStr != "" {
-		cmd.Stdin = strings.NewReader(stdinStr)
+	if stdinReader != nil {
+		cmd.Stdin = stdinReader
 	}
 	var stdout, stderr bytes.Buffer
 	quiet := false
 	if q, ok := kwargs["quiet"]; ok && q != py.False && q != py.None {
 		quiet = true
 	}
+	verbose := os.Getenv("SHIPYARD_VERBOSE") != ""
+
 	if !quiet {
 		fmt.Printf("$ %s\n", displayCmd)
-		if stdinStr != "" {
-			if strings.HasSuffix(stdinStr, "\n") {
-				fmt.Print(stdinStr)
+		if stdinDisplay != "" {
+			if strings.HasSuffix(stdinDisplay, "\n") {
+				fmt.Print(stdinDisplay)
 			} else {
-				fmt.Println(stdinStr)
+				fmt.Println(stdinDisplay)
 			}
 		}
-		cmd.Stdout = io.MultiWriter(&stdout, os.Stdout)
-		cmd.Stderr = io.MultiWriter(&stderr, os.Stderr)
+		cmd.Stdout = io.MultiWriter(os.Stdout, &stdout)
+		cmd.Stderr = io.MultiWriter(os.Stderr, &stderr)
 	} else {
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr
@@ -200,7 +279,7 @@ func runFn(self py.Object, args py.Tuple, kwargs py.StringDict) (py.Object, erro
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			rc = exitErr.ExitCode()
 		} else {
-			return nil, py.ExceptionNewf(py.OSError, "Run() failed to start %q: %v", argv[0], err)
+			return nil, py.ExceptionNewf(py.OSError, "%s() failed to start %q: %v", opName, argv[0], err)
 		}
 	}
 
@@ -208,7 +287,16 @@ func runFn(self py.Object, args py.Tuple, kwargs py.StringDict) (py.Object, erro
 	if c, ok := kwargs["check"]; ok {
 		check = (c != py.False && c != py.None)
 	}
-	if check && rc != 0 {
+	failed := check && rc != 0
+	if quiet && (failed || verbose) {
+		if s := stdout.String(); s != "" {
+			fmt.Print(s)
+		}
+		if s := stderr.String(); s != "" {
+			fmt.Fprint(os.Stderr, s)
+		}
+	}
+	if failed {
 		return nil, py.ExceptionNewf(py.RuntimeError, "Command %q failed with exit code %d", argv[0], rc)
 	}
 

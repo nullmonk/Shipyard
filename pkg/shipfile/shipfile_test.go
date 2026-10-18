@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"shipyard/pkg/shipfile"
+	shipmod "shipyard/pkg/shipfile/modules/shipyard"
 )
 
 func TestLoadOpensshShipfile(t *testing.T) {
@@ -83,6 +84,10 @@ func TestLoadStringAndDependencies(t *testing.T) {
 
 	src := `from shipyard import Patcher, CodePatch, Variable, Dep, Dependency
 
+def _check_banner(v):
+    if not v.strip():
+        raise ValueError("must not be empty")
+
 class Shipfile(Patcher):
     Name = "test-tool"
     PackageName = "test-pkg"
@@ -95,13 +100,15 @@ class Shipfile(Patcher):
     ]
 
     Variables = [
-        Variable("BANNER", "Banner greeting", "Hello world", validate=lambda v: "must not be empty" if not v.strip() else None),
+        Variable("BANNER", "Banner greeting", "Hello world", validate=_check_banner),
         Variable("PORT", "Port number", "8080"),
     ]
 
     @CodePatch(r".*\.c$")
     def patch_code(file, ctx):
         pass
+
+    def save(self, ctx): pass
 `
 	sf, err := shipfile.ValidateString(src, interp)
 	if err != nil {
@@ -185,6 +192,8 @@ class Shipfile(Patcher):
 
     @CodePatch(r".*\.c$")
     def patch_code(file, ctx): pass
+
+    def save(self, ctx): pass
 `
 	sf, err := shipfile.ValidateString(src, interp)
 	if err != nil {
@@ -267,6 +276,8 @@ class Shipfile(Patcher):
     def banner(file, ctx):
         b = ctx.variables["BANNER"]
         file.replace("options->banner = NULL;", 'options->banner = "%s";' % b)
+
+    def save(self, ctx): pass
 `
 	sf, err := shipfile.ValidateString(src, interp)
 	if err != nil {
@@ -303,6 +314,8 @@ class Shipfile(Patcher):
     def banner(file, ctx):
         val = ctx.variables["MISSING_KEY"]
         file.replace("a", val)
+
+    def save(self, ctx): pass
 `
 	sfErr, err := shipfile.ValidateString(errSrc, interp)
 	if err != nil {
@@ -362,10 +375,11 @@ from shipyard import Builder, Tester, Run, test
 class Shipfile(Builder, Tester):
     Name = "test-sandbox"
     Url = "https://github.com/example/repo"
-    Artifacts = r".*"
 
     def build(self):
         pass
+
+    def save(self): pass
 
     @test("run and file write")
     def check_run_and_write(self):
@@ -404,6 +418,299 @@ class Shipfile(Builder, Tester):
 	}
 }
 
+// mockBuilder records all ContainerBuilder calls made during a build run.
+type mockBuilder struct {
+	froms    []string
+	scripts  []string
+	copies   [][3]string // [src, dst, fromContainer]
+	writes   [][2]string // [path, content]
+	workdirs []string
+	saves    [][2]string // [src, dst]
+	runs     []string    // display form of each argv
+}
 
+func (m *mockBuilder) From(image, name string) error {
+	m.froms = append(m.froms, image)
+	return nil
+}
+func (m *mockBuilder) Use(_ string) error { return nil }
+func (m *mockBuilder) Run(argv []string, _ string) (string, string, int, error) {
+	m.runs = append(m.runs, strings.Join(argv, " "))
+	return "", "", 0, nil
+}
+func (m *mockBuilder) Copy(src, dst, from string) error {
+	m.copies = append(m.copies, [3]string{src, dst, from})
+	return nil
+}
+func (m *mockBuilder) WriteFile(path, content string) error {
+	m.writes = append(m.writes, [2]string{path, content})
+	return nil
+}
+func (m *mockBuilder) Workdir(path string) error {
+	m.workdirs = append(m.workdirs, path)
+	return nil
+}
+func (m *mockBuilder) Env(_, _ string) error       { return nil }
+func (m *mockBuilder) User(_ string) error          { return nil }
+func (m *mockBuilder) Dockerfile(_ string) error    { return nil }
+func (m *mockBuilder) Save(src, dst string) error {
+	m.saves = append(m.saves, [2]string{src, dst})
+	return nil
+}
 
+var _ shipmod.ContainerBuilder = (*mockBuilder)(nil)
 
+// TestUserdBShipfileNewBuildSyntax loads the userdb shipfile from its project
+// directory and verifies that RunWithBuilder drives the new Dagger-style
+// container primitives (Copy, Workdir, Write, Save) instead of writing files
+// to the host filesystem.
+func TestUserdBShipfileNewBuildSyntax(t *testing.T) {
+	sfPath := "/home/lethicon/Projects/userbd/shipfile.py"
+	if _, err := os.Stat(sfPath); err != nil {
+		t.Skipf("userdb shipfile not found at %s: %v", sfPath, err)
+	}
+
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	interp, err := shipfile.New(root)
+	if err != nil {
+		t.Fatalf("shipfile.New: %v", err)
+	}
+	defer interp.Close()
+
+	sf, err := shipfile.Load(sfPath, interp)
+	if err != nil {
+		t.Fatalf("load userdb shipfile: %v", err)
+	}
+
+	// Structural assertions
+	if sf.Name != "userdb" {
+		t.Errorf("expected Name 'userdb', got %q", sf.Name)
+	}
+	if !sf.IsBuild() {
+		t.Error("expected IsBuild() == true")
+	}
+	if !sf.ImplementsTester {
+		t.Error("expected ImplementsTester == true")
+	}
+	if len(sf.Variables) != 7 {
+		t.Errorf("expected 7 variables, got %d", len(sf.Variables))
+	}
+	if err := sf.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+
+	// Exercise the new build syntax via a mock ContainerBuilder.
+	mock := &mockBuilder{}
+	if err := sf.RunWithBuilder(mock, shipfile.RunContext{}); err != nil {
+		t.Fatalf("RunWithBuilder: %v", err)
+	}
+
+	// build() or setup() must have set base image and run commands
+	foundFrom := false
+	for _, f := range mock.froms {
+		if f == "ubuntu:22.04" {
+			foundFrom = true
+			break
+		}
+	}
+	if !foundFrom && sf.BaseImage != "ubuntu:22.04" {
+		t.Errorf("expected BaseImage or From('ubuntu:22.04'), got BaseImage=%q, froms=%v", sf.BaseImage, mock.froms)
+	}
+
+	// build() must Copy the source and set Workdir
+	foundCopy := false
+	for _, c := range mock.copies {
+		if c[0] == "userdb.c" || (c[0] == "." && c[1] == "/build") {
+			foundCopy = true
+			break
+		}
+	}
+	if !foundCopy {
+		t.Errorf("expected Copy call; copies = %v", mock.copies)
+	}
+
+	foundWorkdir := false
+	for _, w := range mock.workdirs {
+		if w == "/build" {
+			foundWorkdir = true
+			break
+		}
+	}
+	if !foundWorkdir {
+		t.Errorf("expected Workdir('/build') call; workdirs = %v", mock.workdirs)
+	}
+
+	// build() must Write vars.h into the container (not open() on host)
+	foundVarsH := false
+	for _, w := range mock.writes {
+		if strings.Contains(w[0], "vars.h") && strings.Contains(w[1], "USERDB_USER") {
+			foundVarsH = true
+			break
+		}
+	}
+	if !foundVarsH {
+		t.Errorf("expected Write('*/vars.h', ...) with USERDB_USER define; writes = %v", mock.writes)
+	}
+
+	// build() must Save dist/userdb artifact
+	foundSave := false
+	for _, s := range mock.saves {
+		if s[0] == "dist/userdb" {
+			foundSave = true
+			break
+		}
+	}
+	if !foundSave {
+		t.Errorf("expected Save('dist/userdb', ...); saves = %v", mock.saves)
+	}
+}
+
+func TestContextVariablesDictAndResolution(t *testing.T) {
+	tmpDir := t.TempDir()
+	interp, err := shipfile.New(tmpDir)
+	if err != nil {
+		t.Fatalf("failed to create interpreter: %v", err)
+	}
+	defer interp.Close()
+
+	src := `
+from shipyard import Builder, Variable
+
+def to_int(v):
+    return int(v)
+
+class Shipfile(Builder):
+    Name = "test-variables"
+    PackageName = "test-variables-pkg"
+
+    Variables = [
+        Variable("PORT", "Port number", "8080", validate=to_int),
+        Variable("ENV", "Target environment", "prod"),
+    ]
+
+    def build(self, ctx):
+        assert isinstance(ctx.variables, dict), "ctx.variables must be a dict, got {}".format(type(ctx.variables))
+        assert type(ctx.variables) is dict, "type(ctx.variables) must be dict"
+        assert ctx.variables["PORT"] == 8080, "PORT must be resolved to int 8080, got {!r}".format(ctx.variables["PORT"])
+        assert ctx.variables["ENV"] == "prod"
+        assert ctx.variables.get("PORT") == 8080
+        assert "PORT" in ctx.variables
+        assert "MISSING" not in ctx.variables
+
+    def save(self, ctx):
+        assert isinstance(ctx.variables, dict)
+        assert ctx.variables["PORT"] == 8080
+`
+	sf, err := shipfile.ValidateString(src, interp)
+	if err != nil {
+		t.Fatalf("ValidateString error: %v", err)
+	}
+
+	// 1. Run Build without overrides: default values are validated and resolved beforehand
+	if err := sf.Build(shipfile.RunContext{}); err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+
+	// 2. Run Build with overrides: overrides are validated and resolved
+	overrideSrc := `
+from shipyard import Builder, Variable
+
+def to_int(v):
+    return int(v)
+
+class Shipfile(Builder):
+    Name = "test-variables-ov"
+    PackageName = "test-variables-ov-pkg"
+
+    Variables = [
+        Variable("PORT", "Port number", "8080", validate=to_int),
+        Variable("ENV", "Target environment", "prod"),
+    ]
+
+    def build(self, ctx):
+        assert ctx.variables["PORT"] == 9000, "expected overridden PORT 9000, got {!r}".format(ctx.variables["PORT"])
+        assert ctx.variables["ENV"] == "dev", "expected overridden ENV dev, got {!r}".format(ctx.variables["ENV"])
+
+    def save(self, ctx): pass
+`
+	sfOv, err := shipfile.ValidateString(overrideSrc, interp)
+	if err != nil {
+		t.Fatalf("ValidateString error: %v", err)
+	}
+	rc := shipfile.RunContext{
+		Variables: map[string]string{
+			"PORT": "9000",
+			"ENV":  "dev",
+		},
+	}
+	if err := sfOv.Build(rc); err != nil {
+		t.Fatalf("Build with overrides failed: %v", err)
+	}
+
+	// 3. Invalid override fails validation before function is executed
+	rcInvalid := shipfile.RunContext{
+		Variables: map[string]string{
+			"PORT": "not-an-int",
+		},
+	}
+	if err := sfOv.Build(rcInvalid); err == nil {
+		t.Fatalf("expected Build to fail with invalid PORT override, got nil")
+	}
+
+	// 4. Unknown variable override fails
+	rcUnknown := shipfile.RunContext{
+		Variables: map[string]string{
+			"NON_EXISTENT": "value",
+		},
+	}
+	if err := sfOv.Build(rcUnknown); err == nil {
+		t.Fatalf("expected Build to fail with unknown variable override, got nil")
+	}
+
+	// 5. CodePatch also receives ctx.variables as a dict with resolved values
+	testFile := filepath.Join(tmpDir, "test.txt")
+	if err := os.WriteFile(testFile, []byte("ORIGINAL"), 0644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	patchSrc := `
+from shipyard import Patcher, CodePatch, Variable
+
+def to_upper(v):
+    return v.upper()
+
+class Shipfile(Patcher):
+    Name = "test-patcher"
+    PackageName = "test-patcher-pkg"
+
+    Variables = [
+        Variable("TAG", "Release tag", "v1.0.0", validate=to_upper),
+    ]
+
+    @CodePatch(r"test\.txt$")
+    def patch_file(file, ctx):
+        assert isinstance(ctx.variables, dict), "expected dict, got {}".format(type(ctx.variables))
+        assert ctx.variables["TAG"] == "V2.0.0", "expected V2.0.0, got {!r}".format(ctx.variables["TAG"])
+        file.replace("ORIGINAL", ctx.variables["TAG"])
+
+    def save(self, ctx): pass
+`
+	sfPatch, err := shipfile.ValidateString(patchSrc, interp)
+	if err != nil {
+		t.Fatalf("ValidateString error: %v", err)
+	}
+	sfPatch.Dir = tmpDir
+	applied, err := sfPatch.RunCodePatches(tmpDir, "1.0", os.Stderr, map[string]string{"TAG": "v2.0.0"})
+	if err != nil {
+		t.Fatalf("RunCodePatches error: %v", err)
+	}
+	if len(applied) != 1 {
+		t.Fatalf("expected 1 patch applied, got %d", len(applied))
+	}
+	data, _ := os.ReadFile(testFile)
+	if string(data) != "V2.0.0" {
+		t.Errorf("expected patched content 'V2.0.0', got %q", string(data))
+	}
+}

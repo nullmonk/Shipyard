@@ -62,12 +62,31 @@ def Dep(name, op="", version=""):
 
 
 
+Variables = dict
+
+
 class Context:
     def __init__(self, version="", distro=None, nproc=1, artifacts_dir=None, env=None, variables=None):
         self.version = version if isinstance(version, Version) else Version(version)
         self.distro = distro if distro is not None else Distro()
         self.nproc = nproc
-        self.variables = variables if variables is not None else {}
+        if isinstance(variables, dict):
+            self.variables = variables
+        elif variables is None:
+            self.variables = {}
+        elif isinstance(variables, list):
+            self.variables = {}
+            for v in variables:
+                if hasattr(v, 'name'):
+                    val = getattr(v, 'value', '')
+                    if hasattr(v, 'validate') and callable(v.validate):
+                        self.variables[v.name] = v.validate(val)
+                    else:
+                        self.variables[v.name] = val
+                elif isinstance(v, dict) and 'name' in v:
+                    self.variables[v['name']] = v.get('value', '')
+        else:
+            self.variables = dict(variables)
 
 
 class CodeFile:
@@ -88,7 +107,11 @@ class CodeFile:
 
     def _err(self, msg):
         if msg:
-            raise ValueError(msg.format(file=self.name))
+            try:
+                msg = msg.format(file=self.name)
+            except (KeyError, IndexError, ValueError):
+                pass
+            raise ValueError(msg)
 
     def replace(self, old, new, err='', count=0):
         original = self.contents
@@ -143,35 +166,6 @@ class CodeFile:
         self._save()
 
 
-class Script:
-    def __init__(self, contents, interp=""):
-        import shipyard
-
-        interp_cmd = interp
-        if not interp_cmd:
-            first_line = contents.split('\n', 1)[0].rstrip('\r')
-            if first_line.startswith('#!'):
-                interp_cmd = first_line[2:].strip()
-
-        if not interp_cmd:
-            raise ValueError(
-                "Script() requires an interpreter: provide interp= or start contents with a shebang (#!)"
-            )
-
-        result = shipyard.Run(interp_cmd.split(), stdin=contents)
-        self.stdout = result.stdout
-        self.stderr = result.stderr
-        self.returncode = result.returncode
-
-    def __bool__(self):
-        return self.returncode == 0
-
-    def __repr__(self):
-        return "Script(returncode={}, stdout={!r}, stderr={!r})".format(
-            self.returncode, self.stdout, self.stderr
-        )
-
-
 def _is_valid_source_url(raw_url):
     if not raw_url or not isinstance(raw_url, str):
         return False
@@ -219,8 +213,6 @@ class Shipfile:
     Branch = ""
     VersionTags = "*"
     IgnoredVersions = []
-    Artifacts = ""
-    ArtifactDir = ""
     PackageName = ""
     Package = ""
     Repository = ""
@@ -279,6 +271,11 @@ class Tester(Shipfile):
 def validate(obj):
     """Full validation for any Shipfile subclass. Checks base requirements first,
     then each applicable subclass in order regardless of MRO."""
+    import shipyard
+    cls = shipyard._get_class(obj)
+    is_builder = shipyard._is_subclass(cls, Builder)
+    is_patcher = shipyard._is_subclass(cls, Patcher)
+
     pkg = getattr(obj, "PackageName", "") or getattr(obj, "Package", "")
     if not pkg:
         pn = getattr(obj, "package_name", None)
@@ -295,7 +292,9 @@ def validate(obj):
     urls = getattr(obj, "Urls", []) or getattr(obj, "URLS", [])
     has_url = (True if url else False) or (True if (urls and len(urls) > 0) else False)
 
-    if not (has_pkg or has_url):
+    # A Builder with no URL is valid: it defaults to copying the local source directory.
+    # Patchers and plain Shipfiles must declare a source (package or URL).
+    if not (has_pkg or has_url) and not (is_builder and not is_patcher):
         raise ValueError(
             "Shipfile must define at least a source: (PackageName or sf.package_name) or (Url || Urls) with good types (git repo, tar.gz, tgz, zip)"
         )
@@ -312,12 +311,9 @@ def validate(obj):
                     "invalid Url in Urls '{}': must be a git repo or archive (.tar.gz, .tgz, .zip)".format(u)
                 )
 
-    import shipyard
     shipyard.get_variables(obj)
 
-    cls = shipyard._get_class(obj)
-
-    if shipyard._is_subclass(cls, Patcher):
+    if is_patcher:
         has_codepatch = False
         for name in dir(cls):
             val = getattr(cls, name, None)
@@ -330,19 +326,14 @@ def validate(obj):
             raise ValueError(
                 "Patcher requires at least one codepatch OR a pre/post patch function"
             )
+        if not shipyard._has_own_attr(cls, "save"):
+            raise ValueError("Patcher requires a save() method to declare artifacts")
 
-    if shipyard._is_subclass(cls, Builder):
-        artifacts = getattr(obj, "Artifacts", "")
-        if not artifacts:
-            raise ValueError("Builder requires an artifacts regex")
-        try:
-            re.compile(artifacts)
-        except Exception as e:
-            raise ValueError("Builder Artifacts regex '{}' is invalid: {}".format(artifacts, e))
-        has_setup = shipyard._has_own_attr(cls, "setup") or (True if getattr(obj, "Setup", "") else False)
-        has_build = shipyard._has_own_attr(cls, "build") or (True if getattr(obj, "Build", "") else False)
+    if is_builder:
+        has_setup = shipyard._has_own_attr(cls, "setup")
+        has_build = shipyard._has_own_attr(cls, "build")
         if not (has_setup or has_build):
-            raise ValueError("Builder requires setup or build function")
+            raise ValueError("Builder requires a build() or setup() method")
 
     if shipyard._is_subclass(cls, Tester):
         has_test = False

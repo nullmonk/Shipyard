@@ -26,33 +26,30 @@ func isCallable(obj py.Object) bool {
 	return ok
 }
 
-// Validate checks that val passes the custom validator if present.
+// Validate calls the validator function if present and returns any exception it raises.
 func (v *Variable) Validate(val string) error {
-	if v.ValidateFn == nil || v.ValidateFn == py.None {
-		return nil
-	}
-
-	res, err := py.Call(v.ValidateFn, py.Tuple{py.String(val)}, nil)
-	if err != nil {
-		return err
-	}
-
-	if res == nil || res == py.None || res == py.True {
-		return nil
-	}
-
-	if res == py.False {
-		return py.ExceptionNewf(py.ValueError, "Variable %q validation failed for value %q", v.Name, val)
-	}
-
-	if s, ok := res.(py.String); ok && string(s) != "" {
-		return py.ExceptionNewf(py.ValueError, "Variable %q validation failed: %s", v.Name, string(s))
-	}
-
-	return nil
+	_, err := v.ValidateAndResolve(val)
+	return err
 }
 
-// SetAndValidate sets the variable value after running validation.
+// ValidateAndResolve validates val against the validator function if present and returns the resolved Python object.
+// If the validator returns None or True, py.String(val) is returned.
+// Otherwise, the validator's return value is returned.
+func (v *Variable) ValidateAndResolve(val string) (py.Object, error) {
+	if v.ValidateFn == nil || v.ValidateFn == py.None {
+		return py.String(val), nil
+	}
+	res, err := py.Call(v.ValidateFn, py.Tuple{py.String(val)}, nil)
+	if err != nil {
+		return nil, err
+	}
+	if res == nil || res == py.None || res == py.True {
+		return py.String(val), nil
+	}
+	return res, nil
+}
+
+// SetAndValidate validates val and, if it passes, stores it on the variable.
 func (v *Variable) SetAndValidate(val string) error {
 	if err := v.Validate(val); err != nil {
 		return err
@@ -81,11 +78,8 @@ func (v *Variable) M__getattribute__(name string) (py.Object, error) {
 				}
 				targetVal = string(s)
 			}
-			if err := v.Validate(targetVal); err != nil {
-				return nil, err
-			}
-			return py.True, nil
-		}, 0, "validate([value]) -> bool")
+			return v.ValidateAndResolve(targetVal)
+		}, 0, "validate([value]) -> Any")
 	}
 	return nil, py.ExceptionNewf(py.AttributeError, "'Variable' object has no attribute %q", name)
 }
@@ -255,7 +249,7 @@ func ExtractVariables(target py.Object) ([]*Variable, error) {
 }
 
 // BuildVariablesDict extracts the Shipfile's Variable list, applies any overrides from values,
-// validates all values, and returns a Python dict (py.StringDict) to attach to ctx.variables.
+// validates and resolves all values, and returns a Python dict (py.StringDict) to attach to ctx.variables.
 func BuildVariablesDict(target py.Object, values map[string]string) (py.StringDict, error) {
 	vars, err := ExtractVariables(target)
 	if err != nil {
@@ -263,21 +257,27 @@ func BuildVariablesDict(target py.Object, values map[string]string) (py.StringDi
 	}
 
 	byName := make(map[string]*Variable, len(vars))
-	dict := py.NewStringDict()
 	for _, v := range vars {
 		byName[v.Name] = v
-		dict[v.Name] = py.String(v.Value)
 	}
 
-	for k, val := range values {
-		v, exists := byName[k]
-		if !exists {
+	for k := range values {
+		if _, exists := byName[k]; !exists {
 			return nil, fmt.Errorf("unknown variable %q", k)
 		}
-		if err := v.Validate(val); err != nil {
+	}
+
+	dict := py.NewStringDict()
+	for _, v := range vars {
+		val := v.Value
+		if ovVal, ok := values[v.Name]; ok {
+			val = ovVal
+		}
+		resolved, err := v.ValidateAndResolve(val)
+		if err != nil {
 			return nil, err
 		}
-		dict[k] = py.String(val)
+		dict[v.Name] = resolved
 	}
 
 	return dict, nil
