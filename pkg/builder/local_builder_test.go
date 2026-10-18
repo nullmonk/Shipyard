@@ -50,5 +50,23 @@ func TestLocalBuilderRunStreaming(t *testing.T) {
 	if !strings.Contains(cmdOutBuf.String(), "from_script_stdin") {
 		t.Errorf("expected cmdOut to stream 'from_script_stdin', got %q", cmdOutBuf.String())
 	}
+
+	// Test 3: Run script with shebang (#!/bin/bash) logs preview of first code line, not /bin/bash
+	outBuf.Reset()
+	cmdOutBuf.Reset()
+	scriptBash := `#!/bin/bash
+        python3 -c "print('hello_from_bash_script')"
+        sleep 0.1
+`
+	_, _, _, err = lb.Run([]string{"/bin/bash"}, scriptBash)
+	if err != nil {
+		t.Fatalf("LocalBuilder.Run with bash shebang failed: %v", err)
+	}
+	if strings.Contains(outBuf.String(), "$ /bin/bash") {
+		t.Errorf("expected out NOT to show '$ /bin/bash', got %q", outBuf.String())
+	}
+	if !strings.Contains(outBuf.String(), "python3 -c") {
+		t.Errorf("expected out to show 'python3 -c', got %q", outBuf.String())
+	}
 }
 

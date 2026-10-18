@@ -7,7 +7,7 @@ Use this to test --interactive mode:
 
 import re
 
-from shipyard import CodePatch, CodeFile, Version, Patcher, Variable
+from shipyard import CodePatch, CodeFile, Version, Patcher, Variable, Save
 
 _TAG_RE = re.compile(r"^V_(?P<major>\d+)_(?P<minor>\d+)_P(?P<portable>\d+)$")
 
@@ -36,6 +36,9 @@ class Shipfile(Patcher):
             "replacement that will never be reached",
             err="Intentional failure for --interactive testing: string not found in {file}",
         )
+
+    def save(self):
+        Save("openssh-server_*.deb", "openssh-server.deb")
 
     @staticmethod
     def is_version_ignored(version):

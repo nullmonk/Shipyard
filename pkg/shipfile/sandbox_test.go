@@ -986,17 +986,32 @@ s_bool = True if s else False
 	}
 
 	// Test 4: Script with shebang
+	origStdout = os.Stdout
+	rOut, wOut, _ = os.Pipe()
+	os.Stdout = wOut
+
 	srcScriptShebang := `
 from shipyard import Script
-s = Script("""#!/bin/sh
+s = Script("""#!/bin/bash
 echo from_shebang
 """)
 s_out = s.stdout
 s_rc = s.returncode
 `
 	modShebang, err := runPySrc(t, interp, srcScriptShebang)
+	wOut.Close()
+	os.Stdout = origStdout
+
 	if err != nil {
 		t.Fatalf("Script with shebang failed: %v", err)
+	}
+	n, _ = rOut.Read(buf)
+	streamedShebang := string(buf[:n])
+	if strings.Contains(streamedShebang, "$ /bin/bash") {
+		t.Errorf("expected stream NOT to contain '$ /bin/bash', got %q", streamedShebang)
+	}
+	if !strings.Contains(streamedShebang, "$ echo from_shebang") {
+		t.Errorf("expected stream to contain '$ echo from_shebang', got %q", streamedShebang)
 	}
 	shebangOut := string(modShebang.Globals["s_out"].(py.String))
 	if !strings.Contains(shebangOut, "from_shebang") {

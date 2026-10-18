@@ -155,7 +155,14 @@ func runBuild(cmd *cobra.Command, args []string) error {
 			copyDir = absCopy
 		}
 	} else if sf.IsBuild() && !sf.IsPatch() && sf.Url == "" {
-		copyDir = sf.Dir
+		localSource := filepath.Join(sf.Dir, "sources", sf.Name)
+		if fi, err := os.Stat(localSource); err == nil && fi.IsDir() {
+			copyDir = localSource
+		} else if fi, err := os.Stat(filepath.Join(sf.Dir, "sources", sf.PackageName)); err == nil && fi.IsDir() && sf.PackageName != "" {
+			copyDir = filepath.Join(sf.Dir, "sources", sf.PackageName)
+		} else {
+			copyDir = sf.Dir
+		}
 	}
 
 	version := buildVersion

@@ -259,6 +259,14 @@ func scriptFn(self py.Object, args py.Tuple, kwargs py.StringDict) (py.Object, e
 		}
 	}
 	if displayCmd == "" {
+		for _, line := range strings.Split(content, "\n") {
+			if s := strings.TrimSpace(line); s != "" {
+				displayCmd = s + " …"
+				break
+			}
+		}
+	}
+	if displayCmd == "" {
 		displayCmd = "<script>"
 	}
 

@@ -52,13 +52,21 @@ func (l *LocalBuilder) Use(name string) error {
 
 func (l *LocalBuilder) Run(argv []string, stdin string) (stdout, stderr string, rc int, err error) {
 	var displayCmd string
-	if len(argv) == 3 && argv[0] == "/bin/sh" && argv[1] == "-c" {
+	if len(argv) == 3 && (argv[0] == "/bin/sh" || argv[0] == "/bin/bash" || argv[0] == "sh" || argv[0] == "bash") && argv[1] == "-c" {
 		displayCmd = argv[2]
-	} else if len(argv) >= 1 && (argv[0] == "/bin/sh" || argv[0] == "sh") && stdin != "" {
+	} else if stdin != "" {
 		for _, line := range strings.Split(stdin, "\n") {
 			if s := strings.TrimSpace(line); s != "" && !strings.HasPrefix(s, "#") {
 				displayCmd = s + " …"
 				break
+			}
+		}
+		if displayCmd == "" {
+			for _, line := range strings.Split(stdin, "\n") {
+				if s := strings.TrimSpace(line); s != "" {
+					displayCmd = s + " …"
+					break
+				}
 			}
 		}
 		if displayCmd == "" {
