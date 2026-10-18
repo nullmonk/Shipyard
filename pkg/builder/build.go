@@ -250,31 +250,78 @@ func BuildShipfile(ctx context.Context, client *dagger.Client, sf *shipfile.Ship
 	}
 
 	fmt.Fprintln(out, "[*] Saving artifacts...")
-	var matches []string
-	for _, save := range db.Saves {
-		dstPath := filepath.Join(outputDir, save.DstPath)
-		if opts.Verbose {
-			fmt.Fprintf(out, "    %s → %s\n", save.SrcPath, save.DstPath)
-		}
-		// Try file export first; fall back to directory export to preserve layout.
-		if err := os.MkdirAll(filepath.Dir(dstPath), 0o755); err != nil {
-			return nil, fmt.Errorf("save %s: create parent dir: %w", save.DstPath, err)
-		}
-		if _, err := save.Container.File(save.SrcPath).Export(ctx, dstPath); err != nil {
-			if err2 := os.MkdirAll(dstPath, 0o755); err2 != nil {
-				return nil, fmt.Errorf("save %s: create dir: %w", save.DstPath, err2)
-			}
-			if _, err2 := save.Container.Directory(save.SrcPath).Export(ctx, dstPath); err2 != nil {
-				return nil, fmt.Errorf("save %s: %w", save.SrcPath, err2)
-			}
-		}
-		matches = append(matches, dstPath)
+	matches, err := exportArtifacts(ctx, db.Saves, outputDir, opts.Verbose, out)
+	if err != nil {
+		return nil, err
 	}
 	return &BuildResult{
 		Artifacts: matches,
 		OutputDir: outputDir,
 		Container: ctr,
 	}, nil
+}
+
+func exportContainerPath(ctx context.Context, ctr *dagger.Container, srcPath, dstPath string) error {
+	if err := os.MkdirAll(filepath.Dir(dstPath), 0o755); err != nil {
+		return fmt.Errorf("create parent dir: %w", err)
+	}
+	if _, err := ctr.File(srcPath).Export(ctx, dstPath); err != nil {
+		if err2 := os.MkdirAll(dstPath, 0o755); err2 != nil {
+			return fmt.Errorf("create dir: %w", err2)
+		}
+		if _, err2 := ctr.Directory(srcPath).Export(ctx, dstPath); err2 != nil {
+			return fmt.Errorf("export %s: %w", srcPath, err2)
+		}
+	}
+	return nil
+}
+
+// exportArtifacts exports the saved artifacts to outputDir on the host.
+// Note: The artifacts output is designed as a "container" with a raw layer for the files
+// and a custom description and title.
+func exportArtifacts(ctx context.Context, saves []SaveOp, outputDir string, verbose bool, out io.Writer) ([]string, error) {
+	var matches []string
+	for _, save := range saves {
+		targetDst := save.DstPath
+		if targetDst == "." || targetDst == "" {
+			targetDst = filepath.Base(save.SrcPath)
+		} else if strings.HasSuffix(targetDst, "/") {
+			targetDst = filepath.Join(targetDst, filepath.Base(save.SrcPath))
+		}
+		dstPath := filepath.Join(outputDir, targetDst)
+		if verbose {
+			if save.IsDir {
+				fmt.Fprintf(out, "    %s → %s/\n", save.SrcPath, targetDst)
+			} else {
+				fmt.Fprintf(out, "    %s → %s\n", save.SrcPath, targetDst)
+			}
+		}
+		if save.IsDir {
+			if err := os.MkdirAll(dstPath, 0o755); err != nil {
+				return nil, fmt.Errorf("create dir: %w", err)
+			}
+			if _, err := save.Container.Directory(save.SrcPath).Export(ctx, dstPath); err != nil {
+				return nil, fmt.Errorf("export %s: %w", save.DstPath, err)
+			}
+		} else {
+			if err := exportContainerPath(ctx, save.Container, save.SrcPath, dstPath); err != nil {
+				return nil, fmt.Errorf("save %s: %w", save.DstPath, err)
+			}
+		}
+
+		fi, err := os.Stat(dstPath)
+		if err == nil && fi.IsDir() {
+			_ = filepath.Walk(dstPath, func(p string, info os.FileInfo, err error) error {
+				if err == nil && !info.IsDir() {
+					matches = append(matches, p)
+				}
+				return nil
+			})
+		} else {
+			matches = append(matches, dstPath)
+		}
+	}
+	return matches, nil
 }
 
 // findContainerBinary returns a path to a shipyard binary suitable for injection

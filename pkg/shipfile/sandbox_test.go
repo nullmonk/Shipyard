@@ -1007,11 +1007,11 @@ s_rc = s.returncode
 	}
 	n, _ = rOut.Read(buf)
 	streamedShebang := string(buf[:n])
-	if strings.Contains(streamedShebang, "$ /bin/bash") {
-		t.Errorf("expected stream NOT to contain '$ /bin/bash', got %q", streamedShebang)
+	if strings.Contains(streamedShebang, "$ /bin/bash\n") {
+		t.Errorf("expected stream NOT to contain '$ /bin/bash\\n', got %q", streamedShebang)
 	}
-	if !strings.Contains(streamedShebang, "$ echo from_shebang") {
-		t.Errorf("expected stream to contain '$ echo from_shebang', got %q", streamedShebang)
+	if !strings.Contains(streamedShebang, "echo from_shebang") || !strings.Contains(streamedShebang, "lines in script") {
+		t.Errorf("expected stream to contain 'echo from_shebang' and 'lines in script', got %q", streamedShebang)
 	}
 	shebangOut := string(modShebang.Globals["s_out"].(py.String))
 	if !strings.Contains(shebangOut, "from_shebang") {

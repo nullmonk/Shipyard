@@ -44,7 +44,7 @@ func init() {
 			py.MustNewMethod("Env", envFn, 0, "Env(key, value) → set an environment variable [Builder]"),
 			py.MustNewMethod("User", userFn, 0, "User(name) → set the running user [Builder]"),
 			py.MustNewMethod("Dockerfile", dockerfileFn, 0, "Dockerfile('...') → build from an inline Dockerfile using ContextBundle [Builder]"),
-			py.MustNewMethod("Save", saveFn, 0, "Save(src, dst) → export file/dir to artifacts; src may be 'stage:path' [Builder]"),
+			py.MustNewMethod("Save", saveFn, 0, "Save(src, dst='.') → export file/dir to artifacts; src may be 'stage:path' or glob [Builder]"),
 		},
 		CodeSrc: codeSrc,
 	})

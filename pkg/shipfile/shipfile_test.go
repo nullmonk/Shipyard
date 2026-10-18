@@ -438,7 +438,15 @@ func (m *mockBuilder) Run(argv []string, _ string) (string, string, int, error) 
 	m.runs = append(m.runs, strings.Join(argv, " "))
 	return "", "", 0, nil
 }
-func (m *mockBuilder) Copy(src, dst, from string) error {
+func (m *mockBuilder) Copy(src string, dstAndFrom ...string) error {
+	dst := "."
+	from := ""
+	if len(dstAndFrom) > 0 {
+		dst = dstAndFrom[0]
+	}
+	if len(dstAndFrom) > 1 {
+		from = dstAndFrom[1]
+	}
 	m.copies = append(m.copies, [3]string{src, dst, from})
 	return nil
 }
@@ -453,8 +461,12 @@ func (m *mockBuilder) Workdir(path string) error {
 func (m *mockBuilder) Env(_, _ string) error       { return nil }
 func (m *mockBuilder) User(_ string) error          { return nil }
 func (m *mockBuilder) Dockerfile(_ string) error    { return nil }
-func (m *mockBuilder) Save(src, dst string) error {
-	m.saves = append(m.saves, [2]string{src, dst})
+func (m *mockBuilder) Save(src string, dst ...string) error {
+	dstTarget := "."
+	if len(dst) > 0 {
+		dstTarget = dst[0]
+	}
+	m.saves = append(m.saves, [2]string{src, dstTarget})
 	return nil
 }
 
@@ -523,7 +535,7 @@ func TestUserdBShipfileNewBuildSyntax(t *testing.T) {
 	// build() must Copy the source and set Workdir
 	foundCopy := false
 	for _, c := range mock.copies {
-		if c[0] == "userdb.c" || (c[0] == "." && c[1] == "/build") {
+		if c[0] == "userdb.c" || (c[0] == "." && c[1] == "/build") || c[0] == "src/" {
 			foundCopy = true
 			break
 		}

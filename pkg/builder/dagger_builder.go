@@ -11,6 +11,7 @@ import (
 
 	"dagger.io/dagger"
 	shipmod "shipyard/pkg/shipfile/modules/shipyard"
+	"shipyard/pkg/transfer"
 )
 
 // DaggerBuilder implements shipmod.ContainerBuilder by routing each Python
@@ -42,13 +43,19 @@ type DaggerBuilder struct {
 	// Saves accumulates Save() calls for deferred export by BuildShipfile.
 	// If non-empty, the artifact regex scan is skipped.
 	Saves []SaveOp
+
+	workdir       string
+	stageWorkdirs map[string]string
 }
 
 // SaveOp records a single Save(src, dst) call for deferred export.
+// Note: The artifacts output is a "container" with a raw layer for the files
+// and a custom description and title.
 type SaveOp struct {
 	Container *dagger.Container // snapshot at the time Save() was called
 	SrcPath   string
 	DstPath   string
+	IsDir     bool
 }
 
 var _ shipmod.ContainerBuilder = (*DaggerBuilder)(nil)
@@ -86,6 +93,7 @@ func (d *DaggerBuilder) From(image, name string) error {
 	d.activeName = name
 	d.Container = ctr
 	d.fromCount++
+	d.workdir = ""
 	return nil
 }
 
@@ -104,6 +112,11 @@ func (d *DaggerBuilder) Use(name string) error {
 	}
 	d.activeName = name
 	d.Container = ctr
+	if d.stageWorkdirs != nil {
+		d.workdir = d.stageWorkdirs[name]
+	} else {
+		d.workdir = ""
+	}
 	return nil
 }
 
@@ -115,27 +128,10 @@ func (d *DaggerBuilder) Run(argv []string, stdin string) (stdout, stderr string,
 	}
 
 	var displayCmd string
-	if len(argv) == 3 && (argv[0] == "/bin/sh" || argv[0] == "/bin/bash" || argv[0] == "sh" || argv[0] == "bash") && argv[1] == "-c" {
+	if len(argv) == 3 && shipmod.IsShell(argv[0]) && argv[1] == "-c" {
 		displayCmd = argv[2]
-	} else if stdin != "" {
-		// Script() path: show first non-empty, non-comment line as preview
-		for _, line := range strings.Split(stdin, "\n") {
-			if s := strings.TrimSpace(line); s != "" && !strings.HasPrefix(s, "#") {
-				displayCmd = s + " …"
-				break
-			}
-		}
-		if displayCmd == "" {
-			for _, line := range strings.Split(stdin, "\n") {
-				if s := strings.TrimSpace(line); s != "" {
-					displayCmd = s + " …"
-					break
-				}
-			}
-		}
-		if displayCmd == "" {
-			displayCmd = "<script>"
-		}
+	} else if stdin != "" && len(argv) > 0 && shipmod.IsShell(argv[0]) {
+		displayCmd = shipmod.FormatScriptDisplayCmd(stdin)
 	} else {
 		displayCmd = strings.Join(argv, " ")
 	}
@@ -179,104 +175,251 @@ func (d *DaggerBuilder) Run(argv []string, stdin string) (stdout, stderr string,
 	return stdout, stderr, 0, nil
 }
 
-// Copy copies into the active container.
+func (d *DaggerBuilder) activeContainerName() string {
+	if d.activeName != "" {
+		return d.activeName
+	}
+	return transfer.ContainerCurrent
+}
+
+func (d *DaggerBuilder) transferContext() *transfer.Context {
+	return transfer.NewContext(
+		&daggerTransferDriver{d: d},
+		d.activeContainerName(),
+		transfer.ContainerContext,
+		transfer.ContainerArtifacts,
+	)
+}
+
+// Copy copies into the active container using the transfer specification.
 //
-//   - fromContainer == "": copy srcPath from the ContextBundle (upstream source).
-//     srcPath "." copies the entire bundle.
-//   - fromContainer != "": copy srcPath from that named stage.
-//     srcPath "." copies the entire stage root.
-func (d *DaggerBuilder) Copy(srcPath, dst, fromContainer string) error {
+// Supports:
+//   - Copy(src)                       -> copies from ContextBundle into active container "."
+//   - Copy(src, dst)                  -> copies from ContextBundle into active container dst
+//   - Copy("stage:src", dst)          -> copies from named stage into active container dst
+//   - Copy("src", dst, fromContainer) -> backwards-compatible signature
+func (d *DaggerBuilder) Copy(srcPath string, dstAndFrom ...string) error {
 	if d.active() == nil {
 		return fmt.Errorf("Copy() called before From()")
 	}
-	if d.verbose {
-		if fromContainer != "" {
-			fmt.Fprintf(d.out, "    COPY %s:%s → %s\n", fromContainer, srcPath, dst)
-		} else {
-			fmt.Fprintf(d.out, "    COPY %s → %s\n", srcPath, dst)
-		}
+	src := srcPath
+	var dstArgs []string
+	if len(dstAndFrom) >= 2 && dstAndFrom[1] != "" && !strings.Contains(src, ":") {
+		src = dstAndFrom[1] + ":" + src
+		dstArgs = []string{dstAndFrom[0]}
+	} else if len(dstAndFrom) >= 1 {
+		dstArgs = []string{dstAndFrom[0]}
 	}
+	return d.transferContext().Copy(src, dstArgs...)
+}
 
-	var srcDir *dagger.Directory
-	if fromContainer != "" {
-		// Copy from a named stage.
-		if d.stages == nil {
-			return fmt.Errorf("Copy(%q:%q): no named stages exist", fromContainer, srcPath)
-		}
-		src, ok := d.stages[fromContainer]
-		if !ok {
-			return fmt.Errorf("Copy(): unknown stage %q", fromContainer)
-		}
-		srcDir = src.Rootfs()
-	} else {
-		// Copy from the ContextBundle (upstream source directory).
+type daggerTransferDriver struct {
+	d *DaggerBuilder
+}
+
+func (drv *daggerTransferDriver) resolveContainer(container string) (*dagger.Directory, string, *dagger.Container, error) {
+	d := drv.d
+	switch container {
+	case transfer.ContainerContext, "":
 		if d.source == nil {
-			return fmt.Errorf("Copy(%q): no ContextBundle available (no Url and no local sources/ directory)", srcPath)
+			return nil, "", nil, fmt.Errorf("no ContextBundle available (no Url and no local sources/ directory)")
 		}
-		srcDir = d.source
+		return d.source, "", nil, nil
+	case transfer.ContainerCurrent, d.activeName:
+		if d.active() == nil {
+			return nil, "", nil, fmt.Errorf("no container available (call From() first)")
+		}
+		return d.active().Rootfs(), d.workdir, d.active(), nil
+	case transfer.ContainerArtifacts:
+		return nil, "", nil, nil
+	default:
+		if d.stages == nil {
+			return nil, "", nil, fmt.Errorf("unknown container %q: no named stages exist", container)
+		}
+		c, ok := d.stages[container]
+		if !ok {
+			return nil, "", nil, fmt.Errorf("unknown stage %q", container)
+		}
+		wd := ""
+		if d.stageWorkdirs != nil {
+			wd = d.stageWorkdirs[container]
+		}
+		return c.Rootfs(), wd, c, nil
+	}
+}
+
+func (drv *daggerTransferDriver) ExpandSource(container, srcPath string) ([]string, bool, error) {
+	d := drv.d
+	dir, workdir, _, err := drv.resolveContainer(container)
+	if err != nil {
+		return nil, false, err
 	}
 
-	cleanSrc := strings.TrimPrefix(path.Clean(srcPath), "/")
-	if cleanSrc == "." || cleanSrc == "" {
-		d.setActive(d.active().WithDirectory(dst, srcDir))
-		return nil
+	effectiveSrc := srcPath
+	if !path.IsAbs(effectiveSrc) && workdir != "" {
+		effectiveSrc = path.Join(workdir, effectiveSrc)
 	}
 
 	isGlob := strings.ContainsAny(srcPath, "*?[]")
-	var matches []string
 	if isGlob {
-		var err error
-		matches, err = srcDir.Glob(d.ctx, strings.TrimPrefix(srcPath, "/"))
+		cleanPattern := strings.TrimPrefix(path.Clean(effectiveSrc), "/")
+		matches, err := dir.Glob(d.ctx, cleanPattern)
 		if err != nil {
-			return fmt.Errorf("Copy(%q): glob: %w", srcPath, err)
+			return nil, true, fmt.Errorf("glob: %w", err)
 		}
 		if len(matches) == 0 {
-			return fmt.Errorf("Copy(%q): no files matched pattern", srcPath)
+			return nil, true, fmt.Errorf("no files matched pattern %q", srcPath)
 		}
-	} else {
-		matches = []string{cleanSrc}
+		var result []string
+		for _, m := range matches {
+			result = append(result, "/"+strings.TrimPrefix(m, "/"))
+		}
+		return result, true, nil
 	}
 
-	isDstDir := dst == "." || dst == "" || strings.HasSuffix(dst, "/")
-	if !isDstDir {
-		cleanDst := strings.TrimPrefix(path.Clean(dst), "/")
-		dft, err := d.active().Rootfs().Stat(cleanDst).FileType(d.ctx)
-		if err == nil && dft == dagger.FileTypeDirectory {
-			isDstDir = true
-		}
+	cleanPath := strings.TrimPrefix(path.Clean(effectiveSrc), "/")
+	if cleanPath == "" || cleanPath == "." {
+		return []string{"/"}, false, nil
 	}
+	stat := dir.Stat(cleanPath)
+	if _, err := stat.FileType(d.ctx); err != nil {
+		return nil, false, fmt.Errorf("stat %q: %w", srcPath, err)
+	}
+	return []string{"/" + cleanPath}, false, nil
+}
 
-	for _, m := range matches {
-		m = strings.TrimPrefix(strings.TrimSuffix(m, "/"), "/")
-		stat := srcDir.Stat(m)
-		ft, err := stat.FileType(d.ctx)
+func (drv *daggerTransferDriver) IsDir(container, itemPath string) (bool, error) {
+	d := drv.d
+	dir, _, _, err := drv.resolveContainer(container)
+	if err != nil {
+		return false, err
+	}
+	cleanPath := strings.TrimPrefix(path.Clean(itemPath), "/")
+	if cleanPath == "" || cleanPath == "." {
+		return true, nil
+	}
+	ft, err := dir.Stat(cleanPath).FileType(d.ctx)
+	if err != nil {
+		return false, err
+	}
+	return ft == dagger.FileTypeDirectory, nil
+}
+
+func (drv *daggerTransferDriver) IsDirTarget(container, dstPath string) (bool, error) {
+	if container == transfer.ContainerArtifacts {
+		return strings.HasSuffix(dstPath, "/") || dstPath == "." || dstPath == "", nil
+	}
+	if strings.HasSuffix(dstPath, "/") || dstPath == "." || dstPath == "" {
+		return true, nil
+	}
+	dir, workdir, _, err := drv.resolveContainer(container)
+	if err != nil {
+		return false, nil
+	}
+	effectiveDst := dstPath
+	if !path.IsAbs(effectiveDst) && workdir != "" {
+		effectiveDst = path.Join(workdir, effectiveDst)
+	}
+	cleanDst := strings.TrimPrefix(path.Clean(effectiveDst), "/")
+	if cleanDst == "" || cleanDst == "." {
+		return true, nil
+	}
+	ft, err := dir.Stat(cleanDst).FileType(drv.d.ctx)
+	if err == nil && ft == dagger.FileTypeDirectory {
+		return true, nil
+	}
+	return false, nil
+}
+
+func (drv *daggerTransferDriver) RunTasks(tasks []transfer.Task) error {
+	d := drv.d
+	for _, task := range tasks {
+		if task.DstContainer == transfer.ContainerArtifacts {
+			// Save operation: snapshot container and record SaveOp
+			_, _, ctr, err := drv.resolveContainer(task.SrcContainer)
+			if err != nil {
+				return err
+			}
+			if ctr == nil {
+				return fmt.Errorf("no container available for save (call From() first)")
+			}
+			if d.verbose {
+				fmt.Fprintf(d.out, "    SAVE %s → %s\n", task.SrcPath, task.DstPath)
+			}
+			d.Saves = append(d.Saves, SaveOp{
+				Container: ctr,
+				SrcPath:   task.SrcPath,
+				DstPath:   task.DstPath,
+				IsDir:     task.IsDir,
+			})
+			continue
+		}
+
+		// Copy operation
+		srcDir, _, _, err := drv.resolveContainer(task.SrcContainer)
 		if err != nil {
-			return fmt.Errorf("Copy(%q): stat %q: %w", srcPath, m, err)
+			return err
 		}
 
-		baseName := path.Base(m)
-		var target string
-		if ft == dagger.FileTypeDirectory {
-			if isDstDir {
-				if path.Clean(dst) == baseName {
-					target = dst
-				} else {
-					target = path.Join(dst, baseName)
-				}
-			} else {
-				target = dst
+		cleanSrc := strings.TrimPrefix(path.Clean(task.SrcPath), "/")
+
+		dstWorkdir := d.workdir
+		if task.DstContainer != "" && task.DstContainer != transfer.ContainerCurrent && task.DstContainer != d.activeName {
+			if d.stageWorkdirs != nil {
+				dstWorkdir = d.stageWorkdirs[task.DstContainer]
 			}
-			d.setActive(d.active().WithDirectory(target, srcDir.Directory(m)))
+		}
+
+		effectiveDst := task.DstPath
+		if effectiveDst == "" || effectiveDst == "." {
+			if dstWorkdir != "" {
+				effectiveDst = dstWorkdir
+			} else {
+				effectiveDst = "/"
+			}
+		} else if !path.IsAbs(effectiveDst) {
+			if dstWorkdir != "" {
+				effectiveDst = path.Join(dstWorkdir, effectiveDst)
+			} else {
+				effectiveDst = "/" + effectiveDst
+			}
+		}
+
+		if d.verbose {
+			if task.SrcContainer != "" && task.SrcContainer != transfer.ContainerContext {
+				fmt.Fprintf(d.out, "    COPY %s:%s → %s\n", task.SrcContainer, task.SrcPath, effectiveDst)
+			} else {
+				fmt.Fprintf(d.out, "    COPY %s → %s\n", task.SrcPath, effectiveDst)
+			}
+		}
+
+		isDstActive := (task.DstContainer == "" || task.DstContainer == transfer.ContainerCurrent || task.DstContainer == d.activeName)
+		var targetCtr *dagger.Container
+		if isDstActive {
+			targetCtr = d.active()
 		} else {
-			if isDstDir {
-				target = path.Join(dst, baseName)
+			targetCtr = d.stages[task.DstContainer]
+		}
+		if targetCtr == nil {
+			return fmt.Errorf("target container %q not found", task.DstContainer)
+		}
+
+		if task.IsDir {
+			if cleanSrc == "" || cleanSrc == "." {
+				targetCtr = targetCtr.WithDirectory(effectiveDst, srcDir)
 			} else {
-				target = dst
+				targetCtr = targetCtr.WithDirectory(effectiveDst, srcDir.Directory(cleanSrc))
 			}
-			d.setActive(d.active().WithFile(target, srcDir.File(m)))
+		} else {
+			targetCtr = targetCtr.WithFile(effectiveDst, srcDir.File(cleanSrc))
+		}
+
+		if isDstActive {
+			d.setActive(targetCtr)
+		} else {
+			d.stages[task.DstContainer] = targetCtr
 		}
 	}
-
 	return nil
 }
 
@@ -296,6 +439,13 @@ func (d *DaggerBuilder) WriteFile(path, content string) error {
 func (d *DaggerBuilder) Workdir(path string) error {
 	if d.active() == nil {
 		return fmt.Errorf("Workdir() called before From()")
+	}
+	d.workdir = path
+	if d.activeName != "" {
+		if d.stageWorkdirs == nil {
+			d.stageWorkdirs = make(map[string]string)
+		}
+		d.stageWorkdirs[d.activeName] = path
 	}
 	d.setActive(d.active().WithWorkdir(path))
 	return nil
@@ -351,33 +501,14 @@ func (d *DaggerBuilder) User(name string) error {
 	return nil
 }
 
-// Save records a file or directory for export to the artifacts output directory.
+// Save records a file, directory, or glob pattern for export to the artifacts container.
 // The container is snapshotted at call time, so later layer additions don't affect it.
-func (d *DaggerBuilder) Save(src, dst string) error {
-	var ctr *dagger.Container
-	var srcPath string
-
-	if i := strings.IndexByte(src, ':'); i > 0 {
-		name := src[:i]
-		srcPath = src[i+1:]
-		if d.stages == nil {
-			return fmt.Errorf("Save(%q): no named stages exist", src)
-		}
-		var ok bool
-		ctr, ok = d.stages[name]
-		if !ok {
-			return fmt.Errorf("Save(%q): unknown stage %q", src, name)
-		}
-	} else {
-		ctr = d.Container
-		srcPath = src
-	}
-
-	if ctr == nil {
+// The artifacts output is a container with a raw layer for the files and a custom description and title.
+func (d *DaggerBuilder) Save(src string, dst ...string) error {
+	if d.active() == nil && len(d.stages) == 0 {
 		return fmt.Errorf("Save(%q): no container available (call From() first)", src)
 	}
-	d.Saves = append(d.Saves, SaveOp{Container: ctr, SrcPath: srcPath, DstPath: dst})
-	return nil
+	return d.transferContext().Save(src, dst...)
 }
 
 func truncate(s string, n int) string {

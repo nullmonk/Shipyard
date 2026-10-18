@@ -6,15 +6,14 @@ class Shipfile(Builder):
     Dependencies = ["glibc > 2.30"]
 
     def build(self):
-        From("golang:1.22-alpine", "build")
+        From("golang:1.22-alpine")
         Copy(".", "/src")
         Workdir("/src")
         Script("""
             go build -o /out/hello main.go
         """)
 
-        From("alpine:3.19", "final")
-        Copy("build:/out/hello", "/usr/local/bin/hello")
+        Save("/out/hello")
 
     def save(self):
-        Save("build:/out/hello", "hello")
+        pass

@@ -409,19 +409,9 @@ func BuildPackage(ctx context.Context, client *dagger.Client, sf *shipfile.Shipf
 			return nil, err
 		}
 		fmt.Fprintln(out, "[*] Saving artifacts...")
-		var matches []string
-		for _, save := range db.Saves {
-			dstPath := filepath.Join(outputDir, save.DstPath)
-			if err := os.MkdirAll(filepath.Dir(dstPath), 0o755); err != nil {
-				return nil, fmt.Errorf("save %s: create parent dir: %w", save.DstPath, err)
-			}
-			if opts.Verbose {
-				fmt.Fprintf(out, "    %s → %s\n", save.SrcPath, save.DstPath)
-			}
-			if _, err := save.Container.File(save.SrcPath).Export(ctx, dstPath); err != nil {
-				return nil, fmt.Errorf("save %s: %w", save.SrcPath, err)
-			}
-			matches = append(matches, dstPath)
+		matches, err := exportArtifacts(ctx, db.Saves, outputDir, opts.Verbose, out)
+		if err != nil {
+			return nil, err
 		}
 		return &BuildResult{
 			Artifacts: matches,

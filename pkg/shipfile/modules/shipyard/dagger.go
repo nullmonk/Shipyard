@@ -1,6 +1,8 @@
 package shipmod
 
 import (
+	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -14,8 +16,8 @@ type ContainerBuilder interface {
 	From(image, name string) error
 	Use(name string) error
 	Run(argv []string, stdin string) (stdout, stderr string, rc int, err error)
-	// Copy copies srcPath into dst. fromContainer="" means copy from ContextBundle.
-	Copy(srcPath, dst, fromContainer string) error
+	// Copy copies src into dst.
+	Copy(src string, dstAndFrom ...string) error
 	WriteFile(path, content string) error
 	Workdir(path string) error
 	Env(key, value string) error
@@ -24,10 +26,8 @@ type ContainerBuilder interface {
 	// build context. It takes over the build; commands after it operate on the
 	// final image.
 	Dockerfile(content string) error
-	// Save records a file or directory to export to the artifacts output.
-	// src may be "path" (active container) or "stage:path" (named stage).
-	// dst is a relative path within the artifacts output directory.
-	Save(src, dst string) error
+	// Save records a file or directory to export to the artifacts output container.
+	Save(src string, dst ...string) error
 }
 
 var (
@@ -148,12 +148,11 @@ func copyFn(self py.Object, args py.Tuple, kwargs py.StringDict) (py.Object, err
 		}
 		dst = string(dstArg)
 	}
-	fromContainer, srcPath := parseCopySrc(string(srcArg))
 	b, err := requireBuilder("Copy()")
 	if err != nil {
 		return nil, err
 	}
-	if err := b.Copy(srcPath, dst, fromContainer); err != nil {
+	if err := b.Copy(string(srcArg), dst); err != nil {
 		return nil, py.ExceptionNewf(py.RuntimeError, "Copy(%q, %q): %v", string(srcArg), dst, err)
 	}
 	return py.None, nil
@@ -251,23 +250,9 @@ func scriptFn(self py.Object, args py.Tuple, kwargs py.StringDict) (py.Object, e
 		argv = []string{"/bin/sh"}
 	}
 
-	displayCmd := ""
-	for _, line := range strings.Split(content, "\n") {
-		if s := strings.TrimSpace(line); s != "" && !strings.HasPrefix(s, "#") {
-			displayCmd = s + " …"
-			break
-		}
-	}
-	if displayCmd == "" {
-		for _, line := range strings.Split(content, "\n") {
-			if s := strings.TrimSpace(line); s != "" {
-				displayCmd = s + " …"
-				break
-			}
-		}
-	}
-	if displayCmd == "" {
-		displayCmd = "<script>"
+	displayCmd := strings.Join(argv, " ")
+	if IsShell(argv[0]) {
+		displayCmd = FormatScriptDisplayCmd(content)
 	}
 
 	b := GetActiveBuilder()
@@ -317,32 +302,37 @@ func envFn(self py.Object, args py.Tuple, kwargs py.StringDict) (py.Object, erro
 	return py.None, nil
 }
 
-// Save(src, dst) — record a file/directory for export to the artifacts output.
+// Save(src[, dst]) — record a file, directory, or glob for export to the artifacts output.
 //
 // src may be:
 //
 //	"path"         export from the active container
+//	"pattern*"     export matching files from the active container
 //	"stage:path"   export from a named stage
 //
-// dst is a relative path within the artifacts output directory.
+// dst is optional and defaults to the root of the artifacts output directory (".").
 func saveFn(self py.Object, args py.Tuple, kwargs py.StringDict) (py.Object, error) {
-	if len(args) < 2 {
-		return nil, py.ExceptionNewf(py.TypeError, "Save() requires src and dst arguments")
+	if len(args) < 1 {
+		return nil, py.ExceptionNewf(py.TypeError, "Save() requires at least a src argument")
 	}
 	src, ok := args[0].(py.String)
 	if !ok {
 		return nil, py.ExceptionNewf(py.TypeError, "Save() src must be a string")
 	}
-	dst, ok := args[1].(py.String)
-	if !ok {
-		return nil, py.ExceptionNewf(py.TypeError, "Save() dst must be a string")
+	dst := "."
+	if len(args) >= 2 {
+		dstArg, ok := args[1].(py.String)
+		if !ok {
+			return nil, py.ExceptionNewf(py.TypeError, "Save() dst must be a string")
+		}
+		dst = string(dstArg)
 	}
 	b, err := requireBuilder("Save()")
 	if err != nil {
 		return nil, err
 	}
-	if err := b.Save(string(src), string(dst)); err != nil {
-		return nil, py.ExceptionNewf(py.RuntimeError, "Save(%q, %q): %v", string(src), string(dst), err)
+	if err := b.Save(string(src), dst); err != nil {
+		return nil, py.ExceptionNewf(py.RuntimeError, "Save(%q, %q): %v", string(src), dst, err)
 	}
 	return py.None, nil
 }
@@ -384,4 +374,21 @@ func userFn(self py.Object, args py.Tuple, kwargs py.StringDict) (py.Object, err
 		return nil, py.ExceptionNewf(py.RuntimeError, "User(%q): %v", string(name), err)
 	}
 	return py.None, nil
+}
+
+// IsShell reports whether cmd is /bin/sh, /bin/bash, /bin/ash, etc.
+func IsShell(cmd string) bool {
+	base := filepath.Base(cmd)
+	return base == "sh" || base == "bash" || base == "ash"
+}
+
+// FormatScriptDisplayCmd formats script preview as:
+// stdin[:40].replace("\n", "\\n") (stdin.count("\n") lines in script)
+func FormatScriptDisplayCmd(stdin string) string {
+	preview := stdin
+	if len(preview) > 40 {
+		preview = preview[:40]
+	}
+	preview = strings.ReplaceAll(preview, "\n", "\\n")
+	return fmt.Sprintf("%s (%d lines in script)", preview, strings.Count(stdin, "\n"))
 }

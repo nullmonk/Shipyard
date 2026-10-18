@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	shipmod "shipyard/pkg/shipfile/modules/shipyard"
+	"shipyard/pkg/transfer"
 )
 
 // LocalBuilder implements shipmod.ContainerBuilder for host-local builds (--local).
@@ -52,26 +53,10 @@ func (l *LocalBuilder) Use(name string) error {
 
 func (l *LocalBuilder) Run(argv []string, stdin string) (stdout, stderr string, rc int, err error) {
 	var displayCmd string
-	if len(argv) == 3 && (argv[0] == "/bin/sh" || argv[0] == "/bin/bash" || argv[0] == "sh" || argv[0] == "bash") && argv[1] == "-c" {
+	if len(argv) == 3 && shipmod.IsShell(argv[0]) && argv[1] == "-c" {
 		displayCmd = argv[2]
-	} else if stdin != "" {
-		for _, line := range strings.Split(stdin, "\n") {
-			if s := strings.TrimSpace(line); s != "" && !strings.HasPrefix(s, "#") {
-				displayCmd = s + " …"
-				break
-			}
-		}
-		if displayCmd == "" {
-			for _, line := range strings.Split(stdin, "\n") {
-				if s := strings.TrimSpace(line); s != "" {
-					displayCmd = s + " …"
-					break
-				}
-			}
-		}
-		if displayCmd == "" {
-			displayCmd = "<script>"
-		}
+	} else if stdin != "" && len(argv) > 0 && shipmod.IsShell(argv[0]) {
+		displayCmd = shipmod.FormatScriptDisplayCmd(stdin)
 	} else {
 		displayCmd = strings.Join(argv, " ")
 	}
@@ -177,58 +162,123 @@ func copyFileLocal(src, dst string) error {
 	return nil
 }
 
-func (l *LocalBuilder) Copy(srcPath, dst, fromContainer string) error {
-	absSrc := srcPath
-	if !filepath.IsAbs(absSrc) {
-		absSrc = filepath.Join(l.workdir, srcPath)
-	}
-	absDst := dst
-	if !filepath.IsAbs(absDst) {
-		absDst = filepath.Join(l.workdir, dst)
-	}
-	if absSrc == absDst || (dst == "." && (srcPath == "." || srcPath == "")) {
-		return nil
-	}
+type localTransferDriver struct {
+	l *LocalBuilder
+}
 
-	if strings.ContainsAny(srcPath, "*?[]") {
+func (l *LocalBuilder) transferContext() *transfer.Context {
+	return transfer.NewContext(
+		&localTransferDriver{l: l},
+		transfer.ContainerCurrent,
+		transfer.ContainerContext,
+		transfer.ContainerArtifacts,
+	)
+}
+
+func (drv *localTransferDriver) resolvePath(p string) string {
+	if filepath.IsAbs(p) {
+		return p
+	}
+	return filepath.Join(drv.l.workdir, p)
+}
+
+func (drv *localTransferDriver) ExpandSource(container, srcPath string) ([]string, bool, error) {
+	absSrc := drv.resolvePath(srcPath)
+
+	isGlob := strings.ContainsAny(srcPath, "*?[]")
+	if isGlob {
 		matches, err := filepath.Glob(absSrc)
 		if err != nil {
-			return err
+			return nil, true, err
 		}
-		for _, m := range matches {
-			target := filepath.Join(absDst, filepath.Base(m))
-			absM, _ := filepath.Abs(m)
-			absTarget, _ := filepath.Abs(target)
-			if absM == absTarget {
+		if len(matches) == 0 {
+			return nil, true, fmt.Errorf("no files matched pattern %q", srcPath)
+		}
+		return matches, true, nil
+	}
+
+	fi, err := os.Stat(absSrc)
+	if err != nil {
+		return nil, false, err
+	}
+	if fi.IsDir() && (srcPath == "." || srcPath == "" || strings.HasSuffix(srcPath, "/.") || strings.HasSuffix(srcPath, string(filepath.Separator)+".")) {
+		entries, err := os.ReadDir(absSrc)
+		if err != nil {
+			return nil, false, err
+		}
+		var result []string
+		for _, e := range entries {
+			result = append(result, filepath.Join(absSrc, e.Name()))
+		}
+		return result, true, nil
+	}
+
+	return []string{absSrc}, false, nil
+}
+
+func (drv *localTransferDriver) IsDir(container, path string) (bool, error) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return false, err
+	}
+	return fi.IsDir(), nil
+}
+
+func (drv *localTransferDriver) IsDirTarget(container, dstPath string) (bool, error) {
+	if strings.HasSuffix(dstPath, "/") || strings.HasSuffix(dstPath, string(filepath.Separator)) || dstPath == "." || dstPath == "" {
+		return true, nil
+	}
+	target := dstPath
+	if !filepath.IsAbs(target) {
+		if container == transfer.ContainerArtifacts && drv.l.outDir != "" {
+			target = filepath.Join(drv.l.outDir, dstPath)
+		} else {
+			target = filepath.Join(drv.l.workdir, dstPath)
+		}
+	}
+	fi, err := os.Stat(target)
+	if err == nil && fi.IsDir() {
+		return true, nil
+	}
+	return false, nil
+}
+
+func (drv *localTransferDriver) RunTasks(tasks []transfer.Task) error {
+	l := drv.l
+	for _, task := range tasks {
+		if task.DstContainer == transfer.ContainerArtifacts {
+			l.Saves = append(l.Saves, [2]string{task.SrcPath, task.DstPath})
+			if l.outDir == "" {
 				continue
 			}
-			if err := copyPathLocal(m, target); err != nil {
+			dstPath := filepath.Join(l.outDir, task.DstPath)
+			if err := copyPathLocal(task.SrcPath, dstPath); err != nil {
 				return err
 			}
+			continue
 		}
-		return nil
-	}
 
-	_, err := os.Stat(absSrc)
-	if err != nil {
-		target := absDst
-		if fiDst, errDst := os.Stat(target); errDst == nil && (fiDst.IsDir() || fiDst.Mode().IsRegular()) {
-			return nil
+		dstPath := task.DstPath
+		if !filepath.IsAbs(dstPath) {
+			dstPath = filepath.Join(l.workdir, dstPath)
 		}
-		return fmt.Errorf("local copy: %w", err)
+		if err := copyPathLocal(task.SrcPath, dstPath); err != nil {
+			return err
+		}
 	}
+	return nil
+}
 
-	target := absDst
-	if dst == "." || strings.HasSuffix(dst, "/") || strings.HasSuffix(dst, string(filepath.Separator)) {
-		target = filepath.Join(absDst, filepath.Base(absSrc))
-	} else if fiDst, errDst := os.Stat(absDst); errDst == nil && fiDst.IsDir() {
-		target = filepath.Join(absDst, filepath.Base(absSrc))
+func (l *LocalBuilder) Copy(srcPath string, dstAndFrom ...string) error {
+	src := srcPath
+	var dstArgs []string
+	if len(dstAndFrom) >= 2 && dstAndFrom[1] != "" && !strings.Contains(src, ":") {
+		src = dstAndFrom[1] + ":" + src
+		dstArgs = []string{dstAndFrom[0]}
+	} else if len(dstAndFrom) >= 1 {
+		dstArgs = []string{dstAndFrom[0]}
 	}
-
-	if absSrc == target {
-		return nil
-	}
-	return copyPathLocal(absSrc, target)
+	return l.transferContext().Copy(src, dstArgs...)
 }
 
 func (l *LocalBuilder) WriteFile(path, content string) error {
@@ -266,18 +316,8 @@ func (l *LocalBuilder) Dockerfile(content string) error {
 	return nil
 }
 
-func (l *LocalBuilder) Save(src, dst string) error {
-	l.Saves = append(l.Saves, [2]string{src, dst})
-	if l.outDir == "" {
-		return nil
-	}
-	absSrc := src
-	if !filepath.IsAbs(absSrc) {
-		absSrc = filepath.Join(l.workdir, src)
-	}
-	target := filepath.Join(l.outDir, dst)
-	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
-		return err
-	}
-	return copyPathLocal(absSrc, target)
+// Save records a file, directory, or glob pattern for export to the artifacts container.
+// Note: The artifacts output is a "container" with a raw layer for the files and custom description/title.
+func (l *LocalBuilder) Save(src string, dst ...string) error {
+	return l.transferContext().Save(src, dst...)
 }
