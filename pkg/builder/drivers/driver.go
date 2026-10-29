@@ -34,6 +34,14 @@ type DistroDriver interface {
 
 	// BuildEnvs returns any additional environment variables the in-container build needs.
 	BuildEnvs() map[string]string
+
+	// InstallArtifactsScript returns a POSIX shell snippet that installs every
+	// package artifact in GetArtifactDir() with the distro package manager.
+	// BuildPackage runs it after building and before @test functions, so tests
+	// exercise the newly built packages rather than distro-shipped versions.
+	// Tests may therefore assume the new package is installed. The snippet
+	// exits non-zero when no artifacts are found or installation fails.
+	InstallArtifactsScript() string
 }
 
 // GetDriver selects the appropriate DistroDriver for the given container image.

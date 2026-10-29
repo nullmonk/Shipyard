@@ -84,3 +84,15 @@ func (d *DebianDriver) GetArtifactDir() string               { return "/tmp/buil
 func (d *DebianDriver) DistroName() string                   { return "debian" }
 func (d *DebianDriver) TopDir() string                       { return "/tmp/build" }
 func (d *DebianDriver) BuildEnvs() map[string]string         { return nil }
+
+// InstallArtifactsScript installs the freshly built .debs with apt so
+// dependency resolution applies; apt-get install on file paths is used
+// rather than dpkg -i so missing dependencies resolve from the repos.
+// --allow-downgrades covers the case where the image ships a newer build
+// of the package than the sources just compiled (e.g. security updates).
+func (d *DebianDriver) InstallArtifactsScript() string {
+	dir := d.GetArtifactDir()
+	return fmt.Sprintf(`set -- %s/*.deb
+if [ ! -e "$1" ]; then echo "no built .deb packages in %s" >&2; exit 1; fi
+apt-get install -y --allow-downgrades "$@"`, dir, dir)
+}

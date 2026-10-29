@@ -25,7 +25,7 @@ Or just build it directly with Dagger:
 
 import re
 
-from shipyard import CodePatch, CodeFile, Version, Patcher, Variable, Save
+from shipyard import CodePatch, CodeFile, Version, Patcher, Tester, Run, test, Variable, Save
 
 # Matches the modern "V_<major>_<minor>_P<portable>" tag scheme (e.g. V_9_9_P2,
 # V_10_6_P1). Older releases used messier schemes (V_1_2_3_PRE5, V_2_0_0_BETA1,
@@ -34,7 +34,7 @@ from shipyard import CodePatch, CodeFile, Version, Patcher, Variable, Save
 _TAG_RE = re.compile(r"^V_(?P<major>\d+)_(?P<minor>\d+)_P(?P<portable>\d+)$")
 
 
-class Shipfile(Patcher):
+class Shipfile(Patcher, Tester):
     Name = "openssh"
     Url = "https://github.com/openssh/openssh-portable"
     PackageName = "openssh"
@@ -90,6 +90,24 @@ class Shipfile(Patcher):
 
     def save(self):
         Save("openssh-server_*.deb", "openssh-server.deb")
+
+    # Tests run after the freshly built packages are installed (see
+    # DistroDriver.InstallArtifactsScript), so they may assume the new
+    # openssh-server is installed — not merely built.
+    @test("sshd-installed", "sshd from the freshly built package is installed")
+    def test_sshd_installed(self):
+        Run("test -x /usr/sbin/sshd")
+        Run("dpkg -s openssh-server | grep -q 'Status: install ok installed'")
+
+    @test("sshd-config", "installed sshd_config passes sshd -t")
+    def test_sshd_config(self):
+        # /run/sshd is normally created by init, which containers lack.
+        Run("mkdir -p /run/sshd && /usr/sbin/sshd -t")
+
+    @test("sshd-banner", "sshd advertises the patched default VersionAddendum")
+    def test_banner(self):
+        banner = self.ctx.variables["__BANNER__"]
+        Run("mkdir -p /run/sshd && /usr/sbin/sshd -T 2>/dev/null | grep -i '^versionaddendum' | grep -qF '" + banner + "'")
 
     @staticmethod
     def version_to_tag(v):

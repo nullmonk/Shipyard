@@ -31,6 +31,11 @@ type BuildShipfileOpts struct {
 	// Version specifies the target version or tag to build.
 	Version string
 
+	// Variables overrides default variable values defined in the Shipfile.
+	// Unknown keys must be filtered by the caller: Shipfile.NewContext
+	// returns an error for undeclared variables.
+	Variables map[string]string
+
 	// OutputDir overrides the destination directory for exported artifacts.
 	OutputDir string
 
@@ -166,7 +171,7 @@ func BuildShipfile(ctx context.Context, client *dagger.Client, sf *shipfile.Ship
 	}
 
 	fmt.Fprintf(out, "[*] Building %s\n", sf.Name)
-	if err := sf.RunWithBuilder(db, shipfile.RunContext{Version: ver}); err != nil {
+	if err := sf.RunWithBuilder(db, shipfile.RunContext{Version: ver, Variables: opts.Variables}); err != nil {
 		if opts.Interactive {
 			dropIntoShell(ctx, client, out, db.Container, sf.Dir)
 		}

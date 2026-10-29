@@ -70,19 +70,20 @@ type remotePushResponse struct {
 }
 
 type remoteBuildRequest struct {
-	Name         string `json:"name"`
-	Shipfile     string `json:"shipfile"`
-	System       string `json:"system"`
-	SystemID     uint   `json:"system_id"`
-	PackageImage string `json:"package"`
-	PackageName  string `json:"package_name"`
-	Image        string `json:"image"`
-	Version      string `json:"version"`
-	NoTest       bool   `json:"no_test"`
-	Verbose      *bool  `json:"verbose,omitempty"`
-	Stream       bool   `json:"stream"`
-	Interactive  bool   `json:"interactive"`
-	ShellOnly    bool   `json:"shell_only"`
+	Name         string            `json:"name"`
+	Shipfile     string            `json:"shipfile"`
+	System       string            `json:"system"`
+	SystemID     uint              `json:"system_id"`
+	PackageImage string            `json:"package"`
+	PackageName  string            `json:"package_name"`
+	Image        string            `json:"image"`
+	Version      string            `json:"version"`
+	Variables    map[string]string `json:"variables,omitempty"`
+	NoTest       bool              `json:"no_test"`
+	Verbose      *bool             `json:"verbose,omitempty"`
+	Stream       bool              `json:"stream"`
+	Interactive  bool              `json:"interactive"`
+	ShellOnly    bool              `json:"shell_only"`
 	// SourceArchive is a base64-encoded gzip tar of the local source directory,
 	// sent when the shipfile has no Url and copy mode is active.
 	SourceArchive string `json:"source_archive,omitempty"`

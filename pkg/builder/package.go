@@ -23,6 +23,11 @@ type BuildPackageOpts struct {
 	// Version specifies the target version or tag.
 	Version string
 
+	// Variables overrides default variable values defined in the Shipfile.
+	// They apply to the host-side steps (setup hash, save); in-container
+	// patch/apply/build steps run via the injected shipyard binary.
+	Variables map[string]string
+
 	// OutputDir is the destination directory for exported artifacts (defaults to build-output/<image>).
 	OutputDir string
 
@@ -84,7 +89,8 @@ func GeneratePatch(ctx context.Context, ctr *dagger.Container, sourceDir string)
 //  3. Injects the shipyard binary and shipfile into the container.
 //  4. Calls `shipyard patch` to apply CodePatch functions.
 //  5. Calls `shipyard build` which generates the patch, applies it via distro tools, and builds.
-//  6. Extracts the matching package artifacts to the host.
+//  6. Installs the built packages (when tests are defined) so tests exercise them.
+//  7. Extracts the matching package artifacts to the host.
 func BuildPackage(ctx context.Context, client *dagger.Client, sf *shipfile.Shipfile, image string, opts BuildPackageOpts) (*BuildResult, error) {
 	out := opts.Output
 	if out == nil {
@@ -191,7 +197,7 @@ func BuildPackage(ctx context.Context, client *dagger.Client, sf *shipfile.Shipf
 	// independently of the package source and patch files.
 	// Cache key = image + distro setup + binary + setup commands hash.
 	if sf != nil && sf.HasSetup {
-		setupHash, err := sf.SetupHash(shipfile.RunContext{Version: opts.Version})
+		setupHash, err := sf.SetupHash(shipfile.RunContext{Version: opts.Version, Variables: opts.Variables})
 		if err != nil {
 			return nil, fmt.Errorf("compute setup hash: %w", err)
 		}
@@ -364,6 +370,17 @@ func BuildPackage(ctx context.Context, client *dagger.Client, sf *shipfile.Shipf
 	}
 
 	if sf != nil && sf.IsTest() && !opts.NoTest {
+		// Install the freshly built packages with the distro package manager
+		// so @test functions run against the new packages (which tests may
+		// assume are installed), not the distro-shipped versions.
+		if synced, err := runStep("[*] Installing built packages", []string{"/bin/sh", "-c", driver.InstallArtifactsScript()}); err != nil {
+			if opts.Interactive {
+				dropIntoShell(ctx, client, os.Stderr, ctr, sf.Dir)
+			}
+			return nil, fmt.Errorf("install built packages for tests: %w", err)
+		} else {
+			ctr = synced
+		}
 		if synced, err := runStep("[*] Running tests", []string{"shipyard", "test"}); err != nil {
 			if opts.Interactive {
 				dropIntoShell(ctx, client, os.Stderr, ctr, sf.Dir)
@@ -402,7 +419,7 @@ func BuildPackage(ctx context.Context, client *dagger.Client, sf *shipfile.Shipf
 		if err := db.Workdir(srcDir); err != nil {
 			return nil, fmt.Errorf("workdir to artifact dir: %w", err)
 		}
-		if err := sf.RunSaveWithBuilder(db, shipfile.RunContext{Version: opts.Version}); err != nil {
+		if err := sf.RunSaveWithBuilder(db, shipfile.RunContext{Version: opts.Version, Variables: opts.Variables}); err != nil {
 			if opts.Interactive {
 				dropIntoShell(ctx, client, os.Stderr, ctr, sf.Dir)
 			}

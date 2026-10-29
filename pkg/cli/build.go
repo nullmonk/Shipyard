@@ -16,6 +16,7 @@ import (
 )
 
 var (
+	buildStatusDir    string
 	buildName         string
 	buildPackageImage string
 	buildPackageName  string
@@ -31,6 +32,8 @@ var (
 	buildNoStream     bool
 	buildCopy         string
 	buildNoTest       bool
+	buildVars         string
+	buildVarFlags     []string
 )
 
 func isDaggerRunnerURI(s string) bool {
@@ -78,13 +81,32 @@ With --local: runs setup() and build() directly on the host without Dagger.`,
 	cmd.Flags().StringVarP(&buildArtifacts, "artifacts", "a", "", "artifact regex pattern")
 	cmd.Flags().BoolVar(&buildInteractive, "interactive", false, "drop into interactive container shell on error")
 	cmd.Flags().BoolVar(&buildNoStream, "no-stream", false, "trigger remote build asynchronously without streaming output")
+	cmd.Flags().StringVar(&buildStatusDir, "status-dir", "", "worker mode: stream all output to <dir>/build.log, maintain <dir>/status.json, and write artifacts under <dir>/artifacts (spawned by the Drydock server; forces --no-remote)")
 	cmd.Flags().StringVarP(&buildCopy, "copy", "c", "", "copy local directory (or specified path) into container instead of git")
 	cmd.Flags().Lookup("copy").NoOptDefVal = "."
 	cmd.Flags().BoolVar(&buildNoTest, "no-test", false, "skip running tests defined in shipfile")
+	cmd.Flags().StringVar(&buildVars, "vars", "", "JSON object or path to JSON file with variable overrides (e.g. --vars '{\"PORT\":\"8080\"}' or --vars @vars.json)")
+	cmd.Flags().StringArrayVar(&buildVarFlags, "var", nil, "single variable override as KEY=VALUE (repeatable; wins over --vars)")
 	return cmd
 }
 
 func runBuild(cmd *cobra.Command, args []string) error {
+	if buildStatusDir != "" {
+		// Detached-worker mode for the Drydock server: own the whole
+		// layout (no remote delegation, artifacts forced under the
+		// status dir), tee everything to build.log, and maintain
+		// status.json + artifacts.json for the server's poller.
+		if buildInteractive {
+			return fmt.Errorf("--status-dir cannot be combined with --interactive (detached workers cannot host an attached shell session)")
+		}
+		buildNoRemote = true
+		buildOutput = filepath.Join(buildStatusDir, WorkerArtifactsDir)
+		statusDir := buildStatusDir
+		buildStatusDir = "" // prevent re-entry when recursing below
+		return superviseBuild(statusDir, func() error {
+			return runBuild(cmd, args)
+		})
+	}
 	target := ""
 	copyDir := ""
 
@@ -170,15 +192,20 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		version = os.Getenv("SHIPYARD_VERSION")
 	}
 
+	varOverrides, err := resolveVariableOverrides(sf, buildVars, buildVarFlags)
+	if err != nil {
+		return err
+	}
+
 	if buildLocal {
 		localOut := buildOutput
 		if localOut == "" {
 			localOut = filepath.Join(buildDist, sf.Name)
 		}
-		if err := runLocalBuild(sf, interp, version, localOut, buildArtifacts); err != nil {
+		if err := runLocalBuild(sf, interp, version, localOut, buildArtifacts, varOverrides); err != nil {
 			return err
 		}
-		return runTests(sf, version)
+		return runTests(sf, version, varOverrides)
 	}
 
 	if buildPackageImage != "" || buildSystem != "" {
@@ -222,6 +249,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 				PackageName:  buildPackageName,
 				Image:        buildImage,
 				Version:      version,
+				Variables:    varOverrides,
 				NoTest:       buildNoTest,
 				Verbose:      verbosePtr,
 				Stream:       !buildNoStream || buildInteractive,
@@ -265,6 +293,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		res, err := builder.BuildPackage(ctx, engine.Client(), sf, buildPackageImage, builder.BuildPackageOpts{
 			PackageName: buildPackageName,
 			Version:     version,
+			Variables:   varOverrides,
 			OutputDir:   outDir,
 			Interactive: buildInteractive,
 			NoTest:      buildNoTest,
@@ -288,6 +317,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	res, err := builder.BuildShipfile(ctx, engine.Client(), sf, builder.BuildShipfileOpts{
 		Image:       buildImage,
 		Version:     version,
+		Variables:   varOverrides,
 		OutputDir:   outDir,
 		Interactive: buildInteractive,
 		NoTest:      buildNoTest,
@@ -304,12 +334,12 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runTests(sf *shipfile.Shipfile, version string) error {
+func runTests(sf *shipfile.Shipfile, version string, variables map[string]string) error {
 	if !sf.IsTest() || buildNoTest {
 		return nil
 	}
 	fmt.Println("[*] Running tests...")
-	results, err := sf.RunTests(shipfile.RunContext{Version: version})
+	results, err := sf.RunTests(shipfile.RunContext{Version: version, Variables: variables})
 	if err != nil {
 		return fmt.Errorf("test runner failed: %w", err)
 	}
@@ -333,13 +363,20 @@ func runTests(sf *shipfile.Shipfile, version string) error {
 	return nil
 }
 
-func runLocalBuild(sf *shipfile.Shipfile, interp *shipfile.Interpreter, version, outDir, artifactPattern string) error {
+func runLocalBuild(sf *shipfile.Shipfile, interp *shipfile.Interpreter, version, outDir, artifactPattern string, variables map[string]string) error {
+	// Resolve the output dir now: the shipfile may chdir (e.g. into a tmp
+	// workdir), but local artifacts must land relative to the invocation dir.
+	if outDir != "" {
+		if abs, err := filepath.Abs(outDir); err == nil {
+			outDir = abs
+		}
+	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("get working directory: %w", err)
 	}
 	fmt.Printf("[*] Running local build in %s\n", cwd)
-	rc := shipfile.RunContext{SourceDir: cwd, Version: version}
+	rc := shipfile.RunContext{SourceDir: cwd, Version: version, Variables: variables}
 	lb := builder.NewLocalBuilder(outDir, globalVerbose)
 	if err := sf.RunWithBuilder(lb, rc); err != nil {
 		return err

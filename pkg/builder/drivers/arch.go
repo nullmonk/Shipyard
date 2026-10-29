@@ -53,6 +53,16 @@ func (a *ArchDriver) GetSourceDir(ctx context.Context, ctr *dagger.Container, pk
 
 func (a *ArchDriver) GetArtifactPattern(pkg string) string { return `.*\.pkg\.tar\.zst$` }
 func (a *ArchDriver) GetArtifactDir() string               { return "/tmp/build/artifacts" }
-func (a *ArchDriver) DistroName() string                   { return "arch" }
-func (a *ArchDriver) TopDir() string                       { return "/tmp/build" }
-func (a *ArchDriver) BuildEnvs() map[string]string         { return nil }
+
+// InstallArtifactsScript installs the freshly built packages with pacman.
+// The build runs as the unprivileged builder user, so sudo (NOPASSWD from
+// Setup) escalates for the install.
+func (a *ArchDriver) InstallArtifactsScript() string {
+	dir := a.GetArtifactDir()
+	return fmt.Sprintf("set -- %s/*.pkg.tar.zst\n"+
+		"if [ ! -e \"$1\" ]; then echo \"no built packages in %s\" >&2; exit 1; fi\n"+
+		"sudo pacman -U --noconfirm \"$@\"", dir, dir)
+}
+func (a *ArchDriver) DistroName() string           { return "arch" }
+func (a *ArchDriver) TopDir() string               { return "/tmp/build" }
+func (a *ArchDriver) BuildEnvs() map[string]string { return nil }

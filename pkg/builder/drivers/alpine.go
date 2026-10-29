@@ -62,6 +62,16 @@ func (a *AlpineDriver) GetSourceDir(ctx context.Context, ctr *dagger.Container, 
 
 func (a *AlpineDriver) GetArtifactPattern(pkg string) string { return `.*\.apk$` }
 func (a *AlpineDriver) GetArtifactDir() string               { return "/root/packages" }
-func (a *AlpineDriver) DistroName() string                   { return "alpine" }
-func (a *AlpineDriver) TopDir() string                       { return "/tmp/build" }
-func (a *AlpineDriver) BuildEnvs() map[string]string         { return nil }
+
+// InstallArtifactsScript installs the freshly built .apks. Locally built
+// packages are unsigned, hence --allow-untrusted; reinstalling over what
+// abuild -r may already have installed is a harmless no-op.
+func (a *AlpineDriver) InstallArtifactsScript() string {
+	dir := a.GetArtifactDir()
+	return fmt.Sprintf("set -- %s/*.apk\n"+
+		"if [ ! -e \"$1\" ]; then echo \"no built .apk packages in %s\" >&2; exit 1; fi\n"+
+		"apk add --allow-untrusted \"$@\"", dir, dir)
+}
+func (a *AlpineDriver) DistroName() string           { return "alpine" }
+func (a *AlpineDriver) TopDir() string               { return "/tmp/build" }
+func (a *AlpineDriver) BuildEnvs() map[string]string { return nil }

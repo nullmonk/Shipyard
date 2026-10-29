@@ -109,7 +109,24 @@ func (r *RPMDriver) GetSourceDir(ctx context.Context, ctr *dagger.Container, pkg
 func (r *RPMDriver) GetArtifactPattern(pkg string) string { return `.*\.rpm$` }
 func (r *RPMDriver) GetArtifactDir() string               { return fmt.Sprintf("%s/RPMS", r.topDir) }
 func (r *RPMDriver) DistroName() string                   { return "rpm" }
-func (r *RPMDriver) TopDir() string                       { return r.topDir }
+
+// InstallArtifactsScript installs the freshly built .rpms (found recursively
+// under the RPMS dir) with the distro package manager so dependencies
+// resolve from the repos. openSUSE uses zypper (local rpms are unsigned,
+// hence --allow-unsigned-rpm); the yum-family prefers dnf with a yum fallback.
+func (r *RPMDriver) InstallArtifactsScript() string {
+	dir := r.GetArtifactDir()
+	if strings.Contains(strings.ToLower(r.Image), "suse") {
+		return fmt.Sprintf("found=$(find %s -name '*.rpm' | head -n 1)\n"+
+			"if [ -z \"$found\" ]; then echo \"no built .rpm packages in %s\" >&2; exit 1; fi\n"+
+			"find %s -name '*.rpm' -exec zypper --non-interactive install --allow-unsigned-rpm {} +", dir, dir, dir)
+	}
+	return fmt.Sprintf("found=$(find %s -name '*.rpm' | head -n 1)\n"+
+		"if [ -z \"$found\" ]; then echo \"no built .rpm packages in %s\" >&2; exit 1; fi\n"+
+		"if command -v dnf >/dev/null 2>&1; then find %s -name '*.rpm' -exec dnf install -y {} +; "+
+		"else find %s -name '*.rpm' -exec yum install -y {} +; fi", dir, dir, dir, dir)
+}
+func (r *RPMDriver) TopDir() string { return r.topDir }
 func (r *RPMDriver) BuildEnvs() map[string]string {
 	if r.RPMBuildArgs != "" {
 		return map[string]string{"SHIPYARD_RPM_ARGS": r.RPMBuildArgs}
