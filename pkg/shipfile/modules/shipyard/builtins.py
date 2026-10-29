@@ -155,8 +155,13 @@ class CodeFile:
 
         if before:
             # Start of the line containing the match start
-            line_start = self.contents.rfind('\n', 0, m.start())
-            pos = 0 if line_start == -1 else line_start + 1
+            # NOTE: gpython str has no rfind; scan forward with find instead.
+            pos = 0
+            nl = self.contents.find('\n')
+            ms = m.start()
+            while nl != -1 and nl < ms:
+                pos = nl + 1
+                nl = self.contents.find('\n', nl + 1)
         else:
             # After the newline that ends the line containing the match end
             pos = self.contents.find('\n', m.end())

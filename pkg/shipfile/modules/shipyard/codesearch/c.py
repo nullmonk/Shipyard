@@ -39,7 +39,10 @@ def find_func_sig(sig):
     parts = []
     if m.group('ret'):
         tokens = m.group('ret').split()
-        parts.append(r'\s+'.join(re.escape(t) for t in tokens))
+        esc = []
+        for t in tokens:
+            esc.append(re.escape(t))
+        parts.append(r'\s+'.join(esc))
         parts.append(r'\s+')
     parts.append(re.escape(m.group('name')))
     if m.group('args'):

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -65,12 +66,9 @@ func runPatch(cmd *cobra.Command, args []string) error {
 	}
 	defer interp.Close()
 
-	sf, err := shipfile.Load(sfPath, interp)
+	sf, err := loadAndValidateShipfile(interp, sfPath)
 	if err != nil {
-		return fmt.Errorf("load shipfile %s: %w", sfPath, err)
-	}
-	if err := sf.Validate(); err != nil {
-		return fmt.Errorf("shipfile %s is invalid: %w", sfPath, err)
+		return err
 	}
 
 	fmt.Printf("[*] Patching: %s\n", absTarget)
@@ -78,8 +76,7 @@ func runPatch(cmd *cobra.Command, args []string) error {
 		fmt.Printf("    Version: %s\n", version)
 	}
 	if patchDryRun {
-		fmt.Println("    Mode: dry-run (no files will be modified)")
-		return nil
+		return dryRunPatches(sf, absTarget, version)
 	}
 
 	applied, err := sf.RunCodePatches(absTarget, version, os.Stdout)
@@ -87,5 +84,41 @@ func runPatch(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("run code patches: %w", err)
 	}
 	fmt.Printf("[+] Patch completed: %d function(s) applied\n", len(applied))
+	return nil
+}
+
+// dryRunPatches applies the shipfile's CodePatches to a scratch copy of the
+// target tree and reports what would change, leaving the original untouched.
+func dryRunPatches(sf *shipfile.Shipfile, absTarget, version string) error {
+	fmt.Printf("[*] Dry-run patching (copy of %s)\n", absTarget)
+	if version != "" {
+		fmt.Printf("    Version: %s\n", version)
+	}
+	tmp, err := os.MkdirTemp("", "shipyard-dryrun-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tmp)
+	if err := copyTree(absTarget, tmp, map[string]bool{".git": true}); err != nil {
+		return fmt.Errorf("copy source for dry-run: %w", err)
+	}
+	var buf bytes.Buffer
+	applied, err := sf.RunCodePatches(tmp, version, &buf)
+	if err != nil {
+		return fmt.Errorf("dry-run: patches do NOT apply cleanly: %w", err)
+	}
+	fmt.Print(buf.String())
+	diffs, err := compareTrees(absTarget, tmp, map[string]bool{".git": true})
+	if err != nil {
+		return fmt.Errorf("dry-run compare: %w", err)
+	}
+	if len(diffs) == 0 {
+		fmt.Println("[=] Dry-run: patches ran but changed no files")
+		return nil
+	}
+	fmt.Printf("[+] Dry-run: %d function(s) applied, %d file(s) would change:\n", len(applied), len(diffs))
+	for _, d := range diffs {
+		fmt.Printf("    %s %s\n", map[string]string{"added": "A", "removed": "D", "modified": "M"}[d.Kind], d.Path)
+	}
 	return nil
 }
