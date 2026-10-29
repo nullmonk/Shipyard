@@ -192,7 +192,19 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	}
 
 	if !buildNoRemote && !isDaggerRunnerURI(globalRemote) {
-		if baseURL, tok, rErr := resolveRemoteEndpoint("", ""); rErr == nil && baseURL != "" {
+		// Remote delegation: no saved remotes (or an explicit local
+		// request) falls through to the local Dagger build below. With
+		// several remotes saved, the caller must say which one via
+		// --remote <name> (or $SHIPYARD_REMOTE) unless a default is set
+		// via `shipyard remote use`; a single remote is the default.
+		if cfg, _ := loadRemoteConfig(); cfg != nil && len(cfg.Remotes) > 0 {
+			profile, baseURL, tok, rErr := resolveRemoteTarget("", "")
+			if rErr != nil {
+				return rErr
+			}
+			if note := usingRemoteNote(profile, baseURL, cfg); note != "" {
+				fmt.Println(note)
+			}
 			raw, readErr := os.ReadFile(sfPath)
 			if readErr != nil {
 				return fmt.Errorf("read %s: %w", sfPath, readErr)
