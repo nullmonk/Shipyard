@@ -74,6 +74,17 @@ Variables must have string values, and can optionally specify a `validate=func(v
 
 #### `is_version_ignored(version: shipyard.Version) -> bool`
 
+### `Version`
+
+`self.ctx.version` is a `shipyard.Version`, and shipfiles can also build
+their own via `from shipyard import Version` / `Version("9.4p2")`.
+`str(v)` returns the original string. Versions compare element-wise on
+digit runs with missing parts treated as 0, so `Version("9.4p2") ==
+"9.4.2"` and `Version("9.4") == "9.4.0"`. Mixed-type comparisons
+work in both directions: `ctx.version >= "2.4.0"`, `Version("9.4p2")
+> 8`, `Version("9.4p2") > 9.1`, and the reflected forms `8 < v` /
+`9.1 < v` / `"9.4.2" == v`.
+
 ## Generic Builders
 
 Not every project is an OS package. A Shipfile becomes a **generic builder** by defining

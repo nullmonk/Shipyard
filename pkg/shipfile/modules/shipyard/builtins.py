@@ -13,23 +13,12 @@ class Distro:
         self.arch = arch
 
 
-class Version:
-    def __init__(self, s):
-        self._s = str(s) if s else ''
-
-    def _p(self):
-        import re
-        return [int(n) for n in re.split('[^0-9]+', self._s) if n]
-
-    def __str__(self): return self._s
-    def __repr__(self): return 'Version(' + repr(self._s) + ')'
-    def __lt__(self, o): return self._p() < Version(str(o))._p()
-    def __gt__(self, o): return self._p() > Version(str(o))._p()
-    def __eq__(self, o): return self._p() == Version(str(o))._p()
-    def __le__(self, o): return self._p() <= Version(str(o))._p()
-    def __ge__(self, o): return self._p() >= Version(str(o))._p()
-    def __ne__(self, o): return self._p() != Version(str(o))._p()
-    def __hash__(self): return hash(self._s)
+# NOTE: Version is a Go-backed type injected into the module globals by
+# module.go (see version.go) -- not a Python class. gpython only dispatches
+# rich comparison operators (<, <=, ==, !=, >, >=) to Go-implemented
+# methods, so a pure-Python class here could never make
+# `ctx.version >= "2.4.0"` or `Version("9.4p2") < 9.1` work. The name
+# below must stay absent from this file so it does not shadow the Go type.
 
 
 class Dependency:

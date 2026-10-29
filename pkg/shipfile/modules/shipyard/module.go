@@ -22,7 +22,12 @@ func init() {
 			Name: "shipyard",
 			Doc:  "Shipyard built-ins: CodePatch, CodeFile, Version, Run, Script, Shipfile, Patcher, Builder, Context, Distro.",
 		},
-		Globals: py.StringDict{},
+		Globals: py.StringDict{
+			// Version is a Go-backed type (see version.go): gpython only
+			// dispatches comparison operators to Go-implemented methods,
+			// so a pure-Python class cannot support v >= "2.4.0".
+			"Version": versionType,
+		},
 		Methods: []*py.Method{
 			py.MustNewMethod("CodePatch", codePatchFactory, 0, "CodePatch(*files, versions=[], required=True) -> decorator"),
 			py.MustNewMethod("Patch", codePatchFactory, 0, "Alias for CodePatch"),
