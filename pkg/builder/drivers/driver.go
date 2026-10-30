@@ -42,6 +42,20 @@ type DistroDriver interface {
 	// Tests may therefore assume the new package is installed. The snippet
 	// exits non-zero when no artifacts are found or installation fails.
 	InstallArtifactsScript() string
+
+	// InstallPackageScript returns a POSIX shell snippet that installs a
+	// single target: either a package file (an existing path, or a name with
+	// a package suffix) with the native manager so dependencies resolve, or
+	// a package name from the configured repos/mirrors (including the
+	// drydock hosted mirror). The snippet exits non-zero on failure.
+	// Tests use it via the InstallPackage shipfile helper to install a
+	// specific artifact file or repo package directly.
+	InstallPackageScript(target string) string
+}
+
+// shQuote single-quotes s for embedding in a POSIX shell snippet.
+func shQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
 }
 
 // GetDriver selects the appropriate DistroDriver for the given container image.

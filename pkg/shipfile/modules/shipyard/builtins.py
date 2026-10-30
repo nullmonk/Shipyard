@@ -345,5 +345,239 @@ def validate(obj):
             )
 
 
+# ---------------------------------------------------------------------------
+# Portable multi-distro helpers (proven live on debian + centos).
+#
+# Deliberately generic: no software-specific functions live here (no
+# sshd/openssh strings anywhere below). SaveIfExists/InstallPackage/
+# InstallPackages avoid ctx / os / glob so they work in every phase:
+# save() runs without file-read permission on the packer path, where
+# filesystem probing would raise PermissionError. SaveIfExists instead
+# calls Save() and swallows only "no files matched" errors.
+# NOTE: builtins.py is go:embed-ed into the shipyard binary (module.go),
+# so a binary rebuild is required before these helpers take effect.
+# ---------------------------------------------------------------------------
+
+
+def SaveIfExists(src, dst="."):
+    """Record Save(src, dst) but ignore it when nothing matches.
+
+    Save() errors when a glob matches zero files, so one save() cannot
+    list deb + rpm + pacman patterns directly. Call once per family:
+    only the patterns produced by the current distro's build take
+    effect, the rest are silently skipped. Any other error is re-raised.
+    """
+    import shipyard
+    try:
+        shipyard.Save(src, dst)
+    except Exception as e:
+        if "no files matched" not in str(e):
+            raise
+
+
+def _distro_family(distro):
+    """Map a Distro / ctx / id string to a package family.
+
+    Returns one of "debian", "rpm", "suse", "alpine", "arch", or ""
+    when unknown. Accepts a Distro (id/id_like), a ctx (uses .distro),
+    or a plain id string. Matching mirrors GetDriver in
+    pkg/builder/drivers/driver.go.
+    """
+    if distro is None:
+        return ""
+    inner = distro
+    if hasattr(inner, "distro"):
+        try:
+            inner = inner.distro
+        except Exception:
+            pass
+    if isinstance(inner, str):
+        text = inner
+    else:
+        text = ""
+        for attr in ("id", "id_like", "name"):
+            try:
+                v = getattr(inner, attr, "")
+            except Exception:
+                v = ""
+            if v:
+                text = text + " " + str(v)
+    text = text.lower()
+    if "suse" in text:
+        return "suse"
+    for key in ("debian", "ubuntu", "linuxmint", "kali"):
+        if key in text:
+            return "debian"
+    if "alpine" in text:
+        return "alpine"
+    if "arch" in text:
+        return "arch"
+    for key in ("rocky", "alma", "centos", "redhat", "fedora", "amazon", "rhel", "rpm"):
+        if key in text:
+            return "rpm"
+    return ""
+
+
+def _sh_quote(s):
+    """Single-quote s for embedding in a POSIX shell snippet."""
+    return "'" + str(s).replace("'", "'\"'\"'") + "'"
+
+
+def _file_operand(p):
+    """Quote p as a package-file operand, adding ./ when it has no slash.
+
+    apt/dnf/yum treat a bare `foo.deb`/`foo.rpm` as a package NAME, so file
+    operands must look like paths.
+    """
+    s = str(p)
+    if "/" not in s:
+        s = "./" + s
+    return _sh_quote(s)
+
+
+def InstallPackages(targets, distro=None):
+    """Shell: install ALL given files in ONE native-manager invocation.
+
+    Usage: Run(InstallPackages(files, self.ctx.distro)) where files is the
+    list of just-built artifact paths. A single invocation matters: with
+    one call per file, a later install can resolve an already-installed
+    local package from the repos and overwrite it (proven live: a dbgsym
+    file's install pulled the distro's unpatched openssh-server over the
+    just-installed patched one). One call pins every local file at once,
+    exactly like DistroDriver.InstallArtifactsScript; the repos only fill
+    genuinely missing dependencies. Non-zero exit on failure.
+    distro selects the family like InstallPackage (Distro, ctx, id
+    string, or omitted for runtime manager detection).
+    One pinned transaction is the force mechanism: every local file
+    is named explicitly so the repo can only fill genuinely missing
+    deps, never substitute a same-version repo build. On apt,
+    --reinstall is added as well: apt skips same-version file
+    operands without it.
+    """
+    qs = ""
+    n = 0
+    for p in targets:
+        if qs:
+            qs = qs + " "
+        qs = qs + _file_operand(p)
+        n = n + 1
+    if not n:
+        raise ValueError("InstallPackages requires at least one file")
+    fam = _distro_family(distro)
+    if fam == "debian":
+        return "apt-get install -y --allow-downgrades --reinstall " + qs
+    if fam == "rpm":
+        return (
+            "if command -v dnf >/dev/null 2>&1; then dnf install -y " + qs + "; "
+            "else yum install -y " + qs + "; fi"
+        )
+    if fam == "suse":
+        return "zypper --non-interactive install --allow-unsigned-rpm " + qs
+    if fam == "alpine":
+        return "apk add --allow-untrusted " + qs
+    if fam == "arch":
+        return (
+            "if command -v sudo >/dev/null 2>&1; then sudo pacman -U --noconfirm --needed " + qs + "; "
+            "else pacman -U --noconfirm --needed " + qs + "; fi"
+        )
+    # Unknown family: detect the manager at runtime (./ prefix is valid
+    # for every manager, so one normalized list serves all branches).
+    return (
+        "if command -v apt-get >/dev/null 2>&1; then apt-get install -y --allow-downgrades --reinstall " + qs + "; "
+        "elif command -v dnf >/dev/null 2>&1; then dnf install -y " + qs + "; "
+        "elif command -v yum >/dev/null 2>&1; then yum install -y " + qs + "; "
+        "elif command -v zypper >/dev/null 2>&1; then zypper --non-interactive install --allow-unsigned-rpm " + qs + "; "
+        "elif command -v apk >/dev/null 2>&1; then apk add --allow-untrusted " + qs + "; "
+        "elif command -v pacman >/dev/null 2>&1; then "
+        "if command -v sudo >/dev/null 2>&1; then sudo pacman -U --noconfirm --needed " + qs + "; "
+        "else pacman -U --noconfirm --needed " + qs + "; fi; "
+        "else echo \"no supported package manager\" >&2; exit 1; fi"
+    )
+
+
+def InstallPackage(target, distro=None):
+    """Shell: install one artifact file or repo package in @test code.
+
+    Usage: Run(InstallPackage("/path/to/file")) or
+    Run(InstallPackage("openssh-server", self.ctx.distro)).
+    A target that exists on disk (or carries a package suffix
+    .deb/.rpm/.pkg.tar.*/.apk) is installed from file with the native
+    manager so dependencies resolve; anything else is installed by name
+    from the configured repos -- which assumes the test container's repos
+    (including the drydock hosted mirror) are already configured.
+    distro selects the family: a Distro (id/id_like), a ctx (uses
+    .distro), or a plain id string. When omitted/unknown, the shell
+    detects the manager at runtime (apt-get -> dnf/yum -> zypper ->
+    apk -> pacman). Exits non-zero on failure.
+    """
+    t = _sh_quote(target)
+    fam = _distro_family(distro)
+    if fam == "debian":
+        return (
+            "t=" + t + "; "
+            "case \"$t\" in *.deb) :;; *) if [ ! -e \"$t\" ]; then apt-get install -y \"$t\"; exit $?; fi;; esac; "
+            "case \"$t\" in */*) f=\"$t\";; *) f=\"./$t\";; esac; "
+            "apt-get install -y --allow-downgrades \"$f\""
+        )
+    if fam == "rpm":
+        return (
+            "t=" + t + "; "
+            "case \"$t\" in *.rpm) :;; *) if [ ! -e \"$t\" ]; then "
+            "if command -v dnf >/dev/null 2>&1; then dnf install -y \"$t\"; else yum install -y \"$t\"; fi; exit $?; fi;; esac; "
+            "case \"$t\" in */*) f=\"$t\";; *) f=\"./$t\";; esac; "
+            "if command -v dnf >/dev/null 2>&1; then dnf install -y \"$f\"; else yum install -y \"$f\"; fi"
+        )
+    if fam == "suse":
+        return (
+            "t=" + t + "; "
+            "case \"$t\" in *.rpm) :;; *) "
+            "if [ ! -e \"$t\" ]; then zypper --non-interactive install \"$t\"; exit $?; fi;; esac; "
+            "zypper --non-interactive install --allow-unsigned-rpm \"$t\""
+        )
+    if fam == "alpine":
+        return (
+            "t=" + t + "; "
+            "case \"$t\" in *.apk) :;; *) if [ ! -e \"$t\" ]; then apk add \"$t\"; exit $?; fi;; esac; "
+            "apk add --allow-untrusted \"$t\""
+        )
+    if fam == "arch":
+        return (
+            "t=" + t + "; "
+            "case \"$t\" in *.pkg.tar.*) :;; *) "
+            "if [ ! -e \"$t\" ]; then "
+            "if command -v sudo >/dev/null 2>&1; then sudo pacman -S --noconfirm --needed \"$t\"; "
+            "else pacman -S --noconfirm --needed \"$t\"; fi; exit $?; fi;; esac; "
+            "if command -v sudo >/dev/null 2>&1; then sudo pacman -U --noconfirm --needed \"$t\"; "
+            "else pacman -U --noconfirm --needed \"$t\"; fi"
+        )
+    # Unknown family: detect the manager at runtime.
+    return (
+        "t=" + t + "; "
+        "case \"$t\" in *.deb|*.rpm|*.pkg.tar.*|*.apk) isf=1;; *) "
+        "if [ -e \"$t\" ]; then isf=1; else isf=0; fi;; esac; "
+        "if [ \"$isf\" = 1 ]; then "
+        "case \"$t\" in */*) f=\"$t\";; *) f=\"./$t\";; esac; "
+        "if command -v apt-get >/dev/null 2>&1; then apt-get install -y --allow-downgrades \"$f\"; "
+        "elif command -v dnf >/dev/null 2>&1; then dnf install -y \"$f\"; "
+        "elif command -v yum >/dev/null 2>&1; then yum install -y \"$f\"; "
+        "elif command -v zypper >/dev/null 2>&1; then zypper --non-interactive install --allow-unsigned-rpm \"$t\"; "
+        "elif command -v apk >/dev/null 2>&1; then apk add --allow-untrusted \"$t\"; "
+        "elif command -v pacman >/dev/null 2>&1; then "
+        "if command -v sudo >/dev/null 2>&1; then sudo pacman -U --noconfirm --needed \"$t\"; "
+        "else pacman -U --noconfirm --needed \"$t\"; fi; "
+        "else echo \"no supported package manager\" >&2; exit 1; fi; "
+        "else "
+        "if command -v apt-get >/dev/null 2>&1; then apt-get install -y \"$t\"; "
+        "elif command -v dnf >/dev/null 2>&1; then dnf install -y \"$t\"; "
+        "elif command -v yum >/dev/null 2>&1; then yum install -y \"$t\"; "
+        "elif command -v zypper >/dev/null 2>&1; then zypper --non-interactive install \"$t\"; "
+        "elif command -v apk >/dev/null 2>&1; then apk add \"$t\"; "
+        "elif command -v pacman >/dev/null 2>&1; then "
+        "if command -v sudo >/dev/null 2>&1; then sudo pacman -S --noconfirm --needed \"$t\"; "
+        "else pacman -S --noconfirm --needed \"$t\"; fi; "
+        "else echo \"no supported package manager\" >&2; exit 1; fi; fi"
+    )
+
+
 
 

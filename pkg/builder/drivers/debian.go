@@ -96,3 +96,17 @@ func (d *DebianDriver) InstallArtifactsScript() string {
 if [ ! -e "$1" ]; then echo "no built .deb packages in %s" >&2; exit 1; fi
 apt-get install -y --allow-downgrades "$@"`, dir, dir)
 }
+
+// InstallPackageScript installs one artifact file (existing path or *.deb
+// name) with apt so dependencies resolve, or a package name from the repos.
+// apt requires file operands to look like paths, hence the ./ prefix when
+// the target has no slash.
+func (d *DebianDriver) InstallPackageScript(target string) string {
+	t := shQuote(target)
+	return `t=` + t + `
+case "$t" in *.deb) :;; *) if [ ! -e "$t" ]; then apt-get install -y "$t"; exit $?; fi;; esac
+` +
+		`case "$t" in */*) f="$t";; *) f="./$t";; esac
+` +
+		`apt-get install -y --allow-downgrades "$f"`
+}

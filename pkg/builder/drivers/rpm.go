@@ -126,6 +126,28 @@ func (r *RPMDriver) InstallArtifactsScript() string {
 		"if command -v dnf >/dev/null 2>&1; then find %s -name '*.rpm' -exec dnf install -y {} +; "+
 		"else find %s -name '*.rpm' -exec yum install -y {} +; fi", dir, dir, dir, dir)
 }
+// InstallPackageScript installs one artifact file (existing path or *.rpm
+// name) with the native manager so dependencies resolve, or a package name
+// from the repos. openSUSE uses zypper (local rpms are unsigned, hence
+// --allow-unsigned-rpm); the yum-family prefers dnf with a yum fallback.
+// dnf/yum require file operands to look like paths, hence the ./ prefix
+// when the target has no slash.
+func (r *RPMDriver) InstallPackageScript(target string) string {
+	t := shQuote(target)
+	if strings.Contains(strings.ToLower(r.Image), "suse") {
+		return `t=` + t + `
+case "$t" in *.rpm) :;; *) if [ ! -e "$t" ]; then zypper --non-interactive install "$t"; exit $?; fi;; esac
+` +
+			`zypper --non-interactive install --allow-unsigned-rpm "$t"`
+	}
+	return `t=` + t + `
+case "$t" in *.rpm) :;; *) if [ ! -e "$t" ]; then if command -v dnf >/dev/null 2>&1; then dnf install -y "$t"; else yum install -y "$t"; fi; exit $?; fi;; esac
+` +
+		`case "$t" in */*) f="$t";; *) f="./$t";; esac
+` +
+		`if command -v dnf >/dev/null 2>&1; then dnf install -y "$f"; else yum install -y "$f"; fi`
+}
+
 func (r *RPMDriver) TopDir() string { return r.topDir }
 func (r *RPMDriver) BuildEnvs() map[string]string {
 	if r.RPMBuildArgs != "" {

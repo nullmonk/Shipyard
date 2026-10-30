@@ -63,6 +63,18 @@ func (a *ArchDriver) InstallArtifactsScript() string {
 		"if [ ! -e \"$1\" ]; then echo \"no built packages in %s\" >&2; exit 1; fi\n"+
 		"sudo pacman -U --noconfirm \"$@\"", dir, dir)
 }
+
+// InstallPackageScript installs one artifact file (existing path or
+// *.pkg.tar.* name) with pacman -U, or a package name from the repos with
+// pacman -S. sudo (NOPASSWD from Setup) escalates when tests run as the
+// unprivileged builder user; running as root falls back to plain pacman.
+func (a *ArchDriver) InstallPackageScript(target string) string {
+	t := shQuote(target)
+	return `t=` + t + `
+case "$t" in *.pkg.tar.*) :;; *) if [ ! -e "$t" ]; then if command -v sudo >/dev/null 2>&1; then sudo pacman -S --noconfirm --needed "$t"; else pacman -S --noconfirm --needed "$t"; fi; exit $?; fi;; esac
+` +
+		`if command -v sudo >/dev/null 2>&1; then sudo pacman -U --noconfirm --needed "$t"; else pacman -U --noconfirm --needed "$t"; fi`
+}
 func (a *ArchDriver) DistroName() string           { return "arch" }
 func (a *ArchDriver) TopDir() string               { return "/tmp/build" }
 func (a *ArchDriver) BuildEnvs() map[string]string { return nil }

@@ -72,6 +72,17 @@ func (a *AlpineDriver) InstallArtifactsScript() string {
 		"if [ ! -e \"$1\" ]; then echo \"no built .apk packages in %s\" >&2; exit 1; fi\n"+
 		"apk add --allow-untrusted \"$@\"", dir, dir)
 }
+
+// InstallPackageScript installs one artifact file (existing path or *.apk
+// name) with apk, or a package name from the repos. Locally built packages
+// are unsigned, hence --allow-untrusted for the file form.
+func (a *AlpineDriver) InstallPackageScript(target string) string {
+	t := shQuote(target)
+	return `t=` + t + `
+case "$t" in *.apk) :;; *) if [ ! -e "$t" ]; then apk add "$t"; exit $?; fi;; esac
+` +
+		`apk add --allow-untrusted "$t"`
+}
 func (a *AlpineDriver) DistroName() string           { return "alpine" }
 func (a *AlpineDriver) TopDir() string               { return "/tmp/build" }
 func (a *AlpineDriver) BuildEnvs() map[string]string { return nil }
