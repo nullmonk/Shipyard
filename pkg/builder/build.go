@@ -182,6 +182,10 @@ func BuildShipfile(ctx context.Context, client *dagger.Client, sf *shipfile.Ship
 		cmdErr:    cmdErr,
 		verbose:   opts.Verbose,
 		Container: baseCtr,
+		// Seeded exactly when an image was configured; otherwise build()
+		// must call From() before any Run(). Feeds the imageless fail-fast
+		// guard in DaggerBuilder.Run.
+		hasImage: image != "",
 	}
 
 	mOut := PhaseOut(opts.Stdout)

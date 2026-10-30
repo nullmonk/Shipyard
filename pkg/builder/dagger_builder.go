@@ -36,6 +36,16 @@ type DaggerBuilder struct {
 	activeName string
 	fromCount  int
 
+	// hasImage tracks whether a base image has been selected, either by
+	// seeding the builder from --image/BaseImage or by calling From() (any
+	// form, including named stages) or Dockerfile(). The generic builder
+	// starts from an empty client.Container() when no image is configured so
+	// build() may call From() later; without this flag Run() would proceed
+	// against nothing and surface a confusing downstream error (observed as
+	// fork/exec /bin/sh: no such file or directory from a setup() Run with
+	// no image anywhere). Guarded in Run() via requireImage before executing.
+	hasImage bool
+
 	// Container always mirrors the active container.
 	// The caller reads this after RunWithBuilder returns to get the final image.
 	Container *dagger.Container
@@ -73,6 +83,19 @@ func (d *DaggerBuilder) setActive(ctr *dagger.Container) {
 
 // From sets the base image, optionally naming the stage.
 // A second call without a name is an error — all stages must be named.
+// requireImage returns a clear fail-fast error when no base image has been
+// selected yet. Callers must check this before executing against the
+// container so an imageless Run() fails here instead of against an empty
+// client.Container().
+func (d *DaggerBuilder) requireImage(op string) error {
+	if !d.hasImage {
+		return fmt.Errorf("no base image selected: set BaseImage, pass --image, or call From() before %s()", op)
+	}
+	return nil
+}
+
+// From sets the base image, optionally naming the stage.
+// A second call without a name is an error — all stages must be named.
 func (d *DaggerBuilder) From(image, name string) error {
 	if d.fromCount > 0 && name == "" {
 		return fmt.Errorf("multiple From() calls require a name — e.g. From(%q, \"stage\")", image)
@@ -83,7 +106,12 @@ func (d *DaggerBuilder) From(image, name string) error {
 	}
 	fmt.Fprintln(d.out)
 
-	ctr := d.client.Container().From(image)
+	// A nil client only happens in engine-free unit tests; still record the
+	// image selection so the hasImage guard can be exercised without Dagger.
+	var ctr *dagger.Container
+	if d.client != nil {
+		ctr = d.client.Container().From(image)
+	}
 	if d.stages == nil {
 		d.stages = make(map[string]*dagger.Container)
 	}
@@ -93,6 +121,7 @@ func (d *DaggerBuilder) From(image, name string) error {
 	d.activeName = name
 	d.Container = ctr
 	d.fromCount++
+	d.hasImage = true
 	d.workdir = ""
 	return nil
 }
@@ -123,6 +152,16 @@ func (d *DaggerBuilder) Use(name string) error {
 // Run executes a command in the active container, syncing each layer immediately
 // so stdout is available and the layer is independently cached.
 func (d *DaggerBuilder) Run(argv []string, stdin string) (stdout, stderr string, rc int, err error) {
+	// Fail fast on imageless exec. Exec path diagnosis: shipfile Run()/Script()
+	// (pkg/shipfile/modules/shipyard/run.go) routes via GetActiveBuilder()
+	// when a Builder drives the build, so a setup()/build() Run lands here in
+	// DaggerBuilder.Run — NOT in executeHostCommand (host/local fallback, used
+	// only when no builder is active). The empty client.Container() seed is
+	// non-nil, so the nil-container check below cannot catch it; the hasImage
+	// flag is the correct guard layer. LocalBuilder/host semantics untouched.
+	if err := d.requireImage("Run"); err != nil {
+		return "", "", -1, err
+	}
 	if d.active() == nil {
 		return "", "", -1, fmt.Errorf("Run() called before From()")
 	}
@@ -488,6 +527,7 @@ func (d *DaggerBuilder) Dockerfile(content string) error {
 	d.stages = nil
 	d.activeName = ""
 	d.fromCount = 1
+	d.hasImage = true
 	d.Container = synced
 	return nil
 }

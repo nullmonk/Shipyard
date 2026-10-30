@@ -458,6 +458,9 @@ func BuildPackage(ctx context.Context, client *dagger.Client, sf *shipfile.Shipf
 			cmdErr:    cmdErr,
 			verbose:   opts.Verbose,
 			Container: ctr,
+			// Package builds always run save() against a real image
+			// container (FROM image + driver setup), never imageless.
+			hasImage: true,
 		}
 		if err := db.Workdir(srcDir); err != nil {
 			return nil, fmt.Errorf("workdir to artifact dir: %w", err)
