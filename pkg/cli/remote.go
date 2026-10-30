@@ -80,10 +80,15 @@ type remoteBuildRequest struct {
 	Version      string            `json:"version"`
 	Variables    map[string]string `json:"variables,omitempty"`
 	NoTest       bool              `json:"no_test"`
-	Verbose      *bool             `json:"verbose,omitempty"`
-	Stream       bool              `json:"stream"`
-	Interactive  bool              `json:"interactive"`
-	ShellOnly    bool              `json:"shell_only"`
+	// TestSystems mirrors the host `shipyard build --test-system` fan-out:
+	// one fresh test container per image ref on the remote worker.
+	TestSystems []string `json:"test_systems,omitempty"`
+	// MirrorBaseURL mirrors --mirror-base-url: accepted/stored, unused in v1.
+	MirrorBaseURL string `json:"mirror_base_url,omitempty"`
+	Verbose       *bool  `json:"verbose,omitempty"`
+	Stream        bool   `json:"stream"`
+	Interactive   bool   `json:"interactive"`
+	ShellOnly     bool   `json:"shell_only"`
 	// SourceArchive is a base64-encoded gzip tar of the local source directory,
 	// sent when the shipfile has no Url and copy mode is active.
 	SourceArchive string `json:"source_archive,omitempty"`
@@ -1044,16 +1049,18 @@ func newRemoteCmd() *cobra.Command {
 
 	// 7. build
 	var (
-		rbName        string
-		rbPackage     string
-		rbPackageName string
-		rbImage       string
-		rbSystem      string
-		rbVersion     string
-		rbNoTest      bool
-		rbVerbose     bool
-		rbInteractive bool
-		rbNoStream    bool
+		rbName          string
+		rbPackage       string
+		rbPackageName   string
+		rbImage         string
+		rbSystem        string
+		rbVersion       string
+		rbNoTest        bool
+		rbVerbose       bool
+		rbInteractive   bool
+		rbNoStream      bool
+		rbTestSystems   []string
+		rbMirrorBaseURL string
 	)
 	buildCmd := &cobra.Command{
 		Use:   "build [shipfile]",
@@ -1088,17 +1095,19 @@ func newRemoteCmd() *cobra.Command {
 			}
 
 			reqBody := remoteBuildRequest{
-				Name:         rbName,
-				Shipfile:     content,
-				System:       rbSystem,
-				PackageImage: rbPackage,
-				PackageName:  rbPackageName,
-				Image:        rbImage,
-				Version:      rbVersion,
-				NoTest:       rbNoTest,
-				Verbose:      verbosePtr,
-				Stream:       !rbNoStream || rbInteractive,
-				Interactive:  rbInteractive,
+				Name:          rbName,
+				Shipfile:      content,
+				System:        rbSystem,
+				PackageImage:  rbPackage,
+				PackageName:   rbPackageName,
+				Image:         rbImage,
+				Version:       rbVersion,
+				NoTest:        rbNoTest,
+				TestSystems:   rbTestSystems,
+				MirrorBaseURL: rbMirrorBaseURL,
+				Verbose:       verbosePtr,
+				Stream:        !rbNoStream || rbInteractive,
+				Interactive:   rbInteractive,
 			}
 
 			return executeRemoteBuildStream(baseURL, tok, reqBody)
@@ -1111,6 +1120,8 @@ func newRemoteCmd() *cobra.Command {
 	buildCmd.Flags().StringVarP(&rbSystem, "system", "s", "", "target tracked system name or image")
 	buildCmd.Flags().StringVarP(&rbVersion, "version", "v", "", "target version/tag to build")
 	buildCmd.Flags().BoolVar(&rbNoTest, "no-test", false, "skip running tests defined in shipfile")
+	buildCmd.Flags().StringArrayVar(&rbTestSystems, "test-system", nil, "repeatable: run @test functions in a fresh container FROM <image-ref> instead of the build container")
+	buildCmd.Flags().StringVar(&rbMirrorBaseURL, "mirror-base-url", "", "reserved for future use: accepted and stored but NOT used in v1 (fixtures resolve from distro repos only)")
 	buildCmd.Flags().BoolVarP(&rbVerbose, "verbose", "V", false, "enable verbose Shipyard build output")
 	buildCmd.Flags().BoolVar(&rbInteractive, "interactive", false, "drop into interactive remote container shell on error")
 	buildCmd.Flags().BoolVar(&rbNoStream, "no-stream", false, "trigger build asynchronously without streaming output")

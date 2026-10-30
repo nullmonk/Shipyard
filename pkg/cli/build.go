@@ -16,24 +16,26 @@ import (
 )
 
 var (
-	buildStatusDir    string
-	buildName         string
-	buildPackageImage string
-	buildPackageName  string
-	buildImage        string
-	buildSystem       string
-	buildVersion      string
-	buildDist         string
-	buildOutput       string
-	buildArtifacts    string
-	buildInteractive  bool
-	buildLocal        bool
-	buildNoRemote     bool
-	buildNoStream     bool
-	buildCopy         string
-	buildNoTest       bool
-	buildVars         string
-	buildVarFlags     []string
+	buildStatusDir     string
+	buildName          string
+	buildPackageImage  string
+	buildPackageName   string
+	buildImage         string
+	buildSystem        string
+	buildVersion       string
+	buildDist          string
+	buildOutput        string
+	buildArtifacts     string
+	buildInteractive   bool
+	buildLocal         bool
+	buildNoRemote      bool
+	buildNoStream      bool
+	buildCopy          string
+	buildNoTest        bool
+	buildVars          string
+	buildVarFlags      []string
+	buildTestSystems   []string
+	buildMirrorBaseURL string
 )
 
 func isDaggerRunnerURI(s string) bool {
@@ -85,6 +87,8 @@ With --local: runs setup() and build() directly on the host without Dagger.`,
 	cmd.Flags().StringVarP(&buildCopy, "copy", "c", "", "copy local directory (or specified path) into container instead of git")
 	cmd.Flags().Lookup("copy").NoOptDefVal = "."
 	cmd.Flags().BoolVar(&buildNoTest, "no-test", false, "skip running tests defined in shipfile")
+	cmd.Flags().StringArrayVar(&buildTestSystems, "test-system", nil, "repeatable: run @test functions in a fresh container FROM <image-ref> instead of the build container (one [drydock:phase:test:<image-ref>] section per system; absent = legacy in-place tests labeled 'build')")
+	cmd.Flags().StringVar(&buildMirrorBaseURL, "mirror-base-url", "", "reserved for future use: accepted and stored but NOT used in v1 (fixtures resolve from distro repos only; no mirror configs are plumbed through)")
 	cmd.Flags().StringVar(&buildVars, "vars", "", "JSON object or path to JSON file with variable overrides (e.g. --vars '{\"PORT\":\"8080\"}' or --vars @vars.json)")
 	cmd.Flags().StringArrayVar(&buildVarFlags, "var", nil, "single variable override as KEY=VALUE (repeatable; wins over --vars)")
 	return cmd
@@ -198,6 +202,9 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	}
 
 	if buildLocal {
+		if len(buildTestSystems) > 0 {
+			return fmt.Errorf("--test-system requires a container build and cannot be combined with --local")
+		}
 		localOut := buildOutput
 		if localOut == "" {
 			localOut = filepath.Join(buildDist, sf.Name)
@@ -242,18 +249,20 @@ func runBuild(cmd *cobra.Command, args []string) error {
 				verbosePtr = &v
 			}
 			reqBody := remoteBuildRequest{
-				Name:         buildName,
-				Shipfile:     string(raw),
-				System:       buildSystem,
-				PackageImage: buildPackageImage,
-				PackageName:  buildPackageName,
-				Image:        buildImage,
-				Version:      version,
-				Variables:    varOverrides,
-				NoTest:       buildNoTest,
-				Verbose:      verbosePtr,
-				Stream:       !buildNoStream || buildInteractive,
-				Interactive:  buildInteractive,
+				Name:          buildName,
+				Shipfile:      string(raw),
+				System:        buildSystem,
+				PackageImage:  buildPackageImage,
+				PackageName:   buildPackageName,
+				Image:         buildImage,
+				Version:       version,
+				Variables:     varOverrides,
+				NoTest:        buildNoTest,
+				TestSystems:   buildTestSystems,
+				MirrorBaseURL: buildMirrorBaseURL,
+				Verbose:       verbosePtr,
+				Stream:        !buildNoStream || buildInteractive,
+				Interactive:   buildInteractive,
 			}
 			if copyDir != "" {
 				archiveBytes, archErr := builder.ArchiveDir(copyDir, nil)
@@ -291,17 +300,19 @@ func runBuild(cmd *cobra.Command, args []string) error {
 			outDir = filepath.Join(buildDist, sf.Name, cleanImg)
 		}
 		res, err := builder.BuildPackage(ctx, engine.Client(), sf, buildPackageImage, builder.BuildPackageOpts{
-			PackageName: buildPackageName,
-			Version:     version,
-			Variables:   varOverrides,
-			OutputDir:   outDir,
-			Interactive: buildInteractive,
-			NoTest:      buildNoTest,
-			Verbose:     globalVerbose,
-			Output:      progressOut,
-			Stdout:      os.Stdout,
-			Stderr:      os.Stderr,
-			Copy:        copyDir,
+			PackageName:   buildPackageName,
+			Version:       version,
+			Variables:     varOverrides,
+			OutputDir:     outDir,
+			Interactive:   buildInteractive,
+			NoTest:        buildNoTest,
+			TestSystems:   buildTestSystems,
+			MirrorBaseURL: buildMirrorBaseURL,
+			Verbose:       globalVerbose,
+			Output:        progressOut,
+			Stdout:        os.Stdout,
+			Stderr:        os.Stderr,
+			Copy:          copyDir,
 		})
 		if err != nil {
 			return fmt.Errorf("package build failed: %w", err)
@@ -315,17 +326,19 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		outDir = filepath.Join(buildDist, sf.Name)
 	}
 	res, err := builder.BuildShipfile(ctx, engine.Client(), sf, builder.BuildShipfileOpts{
-		Image:       buildImage,
-		Version:     version,
-		Variables:   varOverrides,
-		OutputDir:   outDir,
-		Interactive: buildInteractive,
-		NoTest:      buildNoTest,
-		Verbose:     globalVerbose,
-		Output:      progressOut,
-		Stdout:      os.Stdout,
-		Stderr:      os.Stderr,
-		Copy:        copyDir,
+		Image:         buildImage,
+		Version:       version,
+		Variables:     varOverrides,
+		OutputDir:     outDir,
+		Interactive:   buildInteractive,
+		NoTest:        buildNoTest,
+		TestSystems:   buildTestSystems,
+		MirrorBaseURL: buildMirrorBaseURL,
+		Verbose:       globalVerbose,
+		Output:        progressOut,
+		Stdout:        os.Stdout,
+		Stderr:        os.Stderr,
+		Copy:          copyDir,
 	})
 	if err != nil {
 		return fmt.Errorf("build failed: %w", err)

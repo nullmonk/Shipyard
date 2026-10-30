@@ -150,6 +150,17 @@ func copyFn(self py.Object, args py.Tuple, kwargs py.StringDict) (py.Object, err
 	}
 	b, err := requireBuilder("Copy()")
 	if err != nil {
+		// Test phase: no active builder. Fresh fan-out test containers
+		// carry the build container's filesystem at TestBuildShadowDir;
+		// Copy() there resolves against the build tree (multi-stage
+		// copy semantics). Legacy in-place runs have no shadow and keep
+		// the historical error.
+		if TestCopyAvailable() {
+			if cerr := TestPhaseCopy(string(srcArg), dst); cerr != nil {
+				return nil, py.ExceptionNewf(py.RuntimeError, "Copy(%q, %q): %v", string(srcArg), dst, cerr)
+			}
+			return py.None, nil
+		}
 		return nil, err
 	}
 	if err := b.Copy(string(srcArg), dst); err != nil {

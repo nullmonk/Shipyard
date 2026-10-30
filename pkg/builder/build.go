@@ -48,6 +48,20 @@ type BuildShipfileOpts struct {
 	// NoTest skips running @test functions after the build.
 	NoTest bool
 
+	// TestSystems, when non-empty, enables multi-system test fan-out: no
+	// in-place test run happens in the build container. Instead one fresh
+	// test container is started per image ref (FROM the ref, then staged
+	// with the build outputs), each emitting its own
+	// [drydock:phase:test:<ref>] section. Empty preserves the legacy
+	// behavior: in-place tests labeled 'build'.
+	TestSystems []string
+
+	// MirrorBaseURL is accepted and stored for forward compatibility but
+	// NOT used in v1: fixtures resolve from distro repos only (no mirror
+	// configs are plumbed through). Documented as reserved-for-future in
+	// the --mirror-base-url flag help.
+	MirrorBaseURL string
+
 	// Verbose enables detailed step-by-step progress output.
 	Verbose bool
 
@@ -170,8 +184,33 @@ func BuildShipfile(ctx context.Context, client *dagger.Client, sf *shipfile.Ship
 		Container: baseCtr,
 	}
 
+	mOut := PhaseOut(opts.Stdout)
+	if opts.MirrorBaseURL != "" {
+		fmt.Fprintf(out, "[*] Note: --mirror-base-url %q is reserved for future use; v1 resolves fixtures from distro repos only (mirror configs are not plumbed through).\n", opts.MirrorBaseURL)
+	}
+
+	// --- setup phase: shipfile setup() only, split out so its output is
+	// captured under [drydock:phase:setup].
+	EmitMarker(mOut, PhaseSetup)
+	if err := sf.RunSetupWithBuilder(db, shipfile.RunContext{Version: ver, Variables: opts.Variables}); err != nil {
+		if opts.Interactive {
+			dropIntoShell(ctx, client, out, db.Container, sf.Dir)
+		}
+		return nil, err
+	}
+
+	// --- build phase ---
+	EmitMarker(mOut, PhaseBuild)
 	fmt.Fprintf(out, "[*] Building %s\n", sf.Name)
-	if err := sf.RunWithBuilder(db, shipfile.RunContext{Version: ver, Variables: opts.Variables}); err != nil {
+	if err := sf.RunBuildWithBuilder(db, shipfile.RunContext{Version: ver, Variables: opts.Variables}); err != nil {
+		if opts.Interactive {
+			dropIntoShell(ctx, client, out, db.Container, sf.Dir)
+		}
+		return nil, err
+	}
+	// Record save() outputs here — the same point in the lifecycle as the
+	// legacy combined run — so Save snapshots predate any test execution.
+	if err := sf.RunSaveWithBuilder(db, shipfile.RunContext{Version: ver, Variables: opts.Variables}); err != nil {
 		if opts.Interactive {
 			dropIntoShell(ctx, client, out, db.Container, sf.Dir)
 		}
@@ -187,7 +226,12 @@ func BuildShipfile(ctx context.Context, client *dagger.Client, sf *shipfile.Ship
 		dropIntoShell(ctx, client, out, ctr, sf.Dir)
 	}
 
-	if sf != nil && sf.IsTest() && !opts.NoTest {
+	runTests := sf != nil && sf.IsTest() && !opts.NoTest
+	if !runTests && len(opts.TestSystems) > 0 {
+		fmt.Fprintln(out, "    (no @test functions to run; ignoring --test-system)")
+	}
+	if runTests && len(opts.TestSystems) == 0 {
+		EmitMarker(mOut, TestPhaseMarker(LegacyTestLabel))
 		shipfileHostFile := client.Host().File(filepath.Join(sf.Dir, "shipfile.py"))
 
 		testCtr := ctr.
@@ -246,6 +290,18 @@ func BuildShipfile(ctx context.Context, client *dagger.Client, sf *shipfile.Ship
 		db.Container = ctr
 	}
 
+	if runTests && len(opts.TestSystems) > 0 {
+		// --- test phase fan-out: one fresh container per --test-system ---
+		// NO in-place test run happens in this mode; each system gets its
+		// own [drydock:phase:test:<ref>] section. Any single test system
+		// failure fails the overall run.
+		if err := runGenericFanOutTests(ctx, client, sf, ctr, db.Saves, ver, opts.TestSystems, opts.Interactive, opts.Verbose, out, mOut, cmdOut, cmdErr); err != nil {
+			return nil, err
+		}
+	}
+
+	// --- publish phase ---
+	EmitMarker(mOut, PhasePublish)
 	if err := os.MkdirAll(outputDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create output directory %s: %w", outputDir, err)
 	}
@@ -259,6 +315,7 @@ func BuildShipfile(ctx context.Context, client *dagger.Client, sf *shipfile.Ship
 	if err != nil {
 		return nil, err
 	}
+	EmitMarker(mOut, PhaseDone)
 	return &BuildResult{
 		Artifacts: matches,
 		OutputDir: outputDir,

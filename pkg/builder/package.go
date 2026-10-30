@@ -40,6 +40,20 @@ type BuildPackageOpts struct {
 	// NoTest skips running @test functions after the build.
 	NoTest bool
 
+	// TestSystems, when non-empty, enables multi-system test fan-out: no
+	// in-place test run happens in the build container. Instead one fresh
+	// test container is started per image ref (FROM the ref, FULL driver
+	// Setup, build artifacts staged, Copy-from-build shadow), each emitting
+	// its own [drydock:phase:test:<ref>] section. Empty preserves the legacy
+	// behavior: in-place tests labeled 'build'.
+	TestSystems []string
+
+	// MirrorBaseURL is accepted and stored for forward compatibility but
+	// NOT used in v1: fixtures resolve from distro repos only (no mirror
+	// configs are plumbed through). Documented as reserved-for-future in
+	// the --mirror-base-url flag help.
+	MirrorBaseURL string
+
 	// Verbose enables detailed step-by-step progress output.
 	Verbose bool
 
@@ -136,6 +150,15 @@ func BuildPackage(ctx context.Context, client *dagger.Client, sf *shipfile.Shipf
 		fmt.Fprintf(out, "    Package: %s  Driver: %s\n", pkgName, driver.DistroName())
 	}
 
+	mOut := PhaseOut(opts.Stdout)
+	if opts.MirrorBaseURL != "" {
+		fmt.Fprintf(out, "[*] Note: --mirror-base-url %q is reserved for future use; v1 resolves fixtures from distro repos only (mirror configs are not plumbed through).\n", opts.MirrorBaseURL)
+	}
+
+	// --- setup phase: driver Setup() plus the shipfile setup() layer, split
+	// out so their output is captured under [drydock:phase:setup].
+	EmitMarker(mOut, PhaseSetup)
+
 	syncContainer := func(c *dagger.Container, label string) (*dagger.Container, error) {
 		fmt.Fprintf(out, "%s... ", label)
 		t0 := time.Now()
@@ -230,6 +253,9 @@ func BuildPackage(ctx context.Context, client *dagger.Client, sf *shipfile.Shipf
 	}
 
 	ctr = driver.InstallBuildDeps(ctr, pkgName)
+	// --- build phase: everything from build-dep install through the
+	// in-container patch/apply/build steps ---
+	EmitMarker(mOut, PhaseBuild)
 	if synced, err := syncContainer(ctr, fmt.Sprintf("[*] Installing build deps for %s", pkgName)); err != nil {
 		if opts.Interactive {
 			dropIntoShell(ctx, client, os.Stderr, ctr, sf.Dir)
@@ -369,7 +395,12 @@ func BuildPackage(ctx context.Context, client *dagger.Client, sf *shipfile.Shipf
 		ctr = synced
 	}
 
-	if sf != nil && sf.IsTest() && !opts.NoTest {
+	runTests := sf != nil && sf.IsTest() && !opts.NoTest
+	if !runTests && len(opts.TestSystems) > 0 {
+		fmt.Fprintln(out, "    (no @test functions to run; ignoring --test-system)")
+	}
+	if runTests && len(opts.TestSystems) == 0 {
+		EmitMarker(mOut, TestPhaseMarker(LegacyTestLabel))
 		// Install the freshly built packages with the distro package manager
 		// so @test functions run against the new packages (which tests may
 		// assume are installed), not the distro-shipped versions.
@@ -391,6 +422,18 @@ func BuildPackage(ctx context.Context, client *dagger.Client, sf *shipfile.Shipf
 		}
 	}
 
+	if runTests && len(opts.TestSystems) > 0 {
+		// --- test phase fan-out: one fresh container per --test-system ---
+		// NO in-place test run happens in this mode; each system gets its
+		// own [drydock:phase:test:<ref>] section. Any single test system
+		// failure fails the overall run.
+		if err := runPackageFanOutTests(ctx, client, sf, ctr, driver, opts.Version, pkgName, opts.TestSystems, opts.Interactive, opts.Verbose, out, mOut, cmdOut, cmdErr); err != nil {
+			return nil, err
+		}
+	}
+
+	// --- publish phase ---
+	EmitMarker(mOut, PhasePublish)
 	// Step 7: Extract artifacts
 	srcDir := driver.GetArtifactDir()
 	outputDir := opts.OutputDir
@@ -430,6 +473,7 @@ func BuildPackage(ctx context.Context, client *dagger.Client, sf *shipfile.Shipf
 		if err != nil {
 			return nil, err
 		}
+		EmitMarker(mOut, PhaseDone)
 		return &BuildResult{
 			Artifacts: matches,
 			OutputDir: outputDir,

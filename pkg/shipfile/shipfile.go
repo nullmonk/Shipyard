@@ -1085,12 +1085,12 @@ func (s *Shipfile) Setup(ctx RunContext) error {
 	return nil
 }
 
-// RunWithBuilder sets b as the active ContainerBuilder and drives the
-// shipfile's build lifecycle on the host side: setup() (if defined) then
-// build(). Every shipyard.From/Run/Copy/Write/Source/Workdir call inside those
-// methods routes through b to accumulate Dagger layers rather than executing
-// locally. The caller reads the resulting container from b after this returns.
-func (s *Shipfile) RunWithBuilder(b shipmod.ContainerBuilder, ctx RunContext) error {
+// RunSetupWithBuilder sets b as the active ContainerBuilder and drives only the
+// shipfile's setup() method. It is the setup-phase counterpart of
+// RunBuildWithBuilder: phased builds call setup, build, and save separately
+// so each phase's output lands under its own [drydock:phase:*] marker while
+// preserving RunWithBuilder's sequencing and error wrapping.
+func (s *Shipfile) RunSetupWithBuilder(b shipmod.ContainerBuilder, ctx RunContext) error {
 	cleanup, err := s.enableBuildSandbox()
 	if err != nil {
 		return err
@@ -1105,14 +1105,45 @@ func (s *Shipfile) RunWithBuilder(b shipmod.ContainerBuilder, ctx RunContext) er
 			return fmt.Errorf("setup: %w", err)
 		}
 	}
+	return nil
+}
+
+// RunBuildWithBuilder sets b as the active ContainerBuilder and drives only
+// the shipfile's build() method. See RunSetupWithBuilder for the phased-build
+// contract.
+func (s *Shipfile) RunBuildWithBuilder(b shipmod.ContainerBuilder, ctx RunContext) error {
+	cleanup, err := s.enableBuildSandbox()
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	shipmod.SetActiveBuilder(b)
+	defer shipmod.ClearActiveBuilder()
+
 	if s.HasBuild {
 		if err := s.CallMethod(nil, "build", ctx.overrides()...); err != nil {
 			return fmt.Errorf("build: %w", err)
 		}
 	}
+	return nil
+}
+
+// RunWithBuilder sets b as the active ContainerBuilder and drives the
+// shipfile's build lifecycle on the host side: setup() (if defined) then
+// build(). Every shipyard.From/Run/Copy/Write/Source/Workdir call inside those
+// methods routes through b to accumulate Dagger layers rather than executing
+// locally. The caller reads the resulting container from b after this returns.
+func (s *Shipfile) RunWithBuilder(b shipmod.ContainerBuilder, ctx RunContext) error {
+	if err := s.RunSetupWithBuilder(b, ctx); err != nil {
+		return err
+	}
+	if err := s.RunBuildWithBuilder(b, ctx); err != nil {
+		return err
+	}
 	if s.HasSave {
-		if err := s.CallMethod(nil, "save", ctx.overrides()...); err != nil {
-			return fmt.Errorf("save: %w", err)
+		if err := s.RunSaveWithBuilder(b, ctx); err != nil {
+			return err
 		}
 	}
 	return nil
