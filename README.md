@@ -45,6 +45,15 @@ See [`docs/`](docs/) for the full reference (`Shipfile.md`, `CodePatch.md`,
 `Building.md`, `LocalWorkflow.md`) and [`examples/`](examples/) for
 runnable Shipfiles.
 
+## Demo
+
+Watch a build with multi-system tests (`demo/showcase.cast`, playable with
+[asciinema](https://asciinema.org/), or re-record it with `./demo/showcase.sh`):
+
+```
+asciinema play demo/showcase.cast
+```
+
 ## Install
 
 Requires Go 1.26+ and Docker (Dagger engine):
