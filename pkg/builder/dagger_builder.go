@@ -70,6 +70,13 @@ type SaveOp struct {
 
 var _ shipmod.ContainerBuilder = (*DaggerBuilder)(nil)
 
+// IsContainerBuild reports that DaggerBuilder drives build() host-side while
+// targeting a container. pkg/shipfile probes this via
+// shipmod.IsContainerDriven to seed SHIPYARD_IN_CONTAINER=1 into the gpython
+// sandbox environ for setup()/build(). LocalBuilder deliberately does NOT
+// implement it, so --local runs never observe the marker.
+func (d *DaggerBuilder) IsContainerBuild() bool { return true }
+
 func (d *DaggerBuilder) active() *dagger.Container {
 	return d.Container
 }

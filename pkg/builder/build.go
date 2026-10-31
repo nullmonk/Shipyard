@@ -171,6 +171,12 @@ func BuildShipfile(ctx context.Context, client *dagger.Client, sf *shipfile.Ship
 	} else {
 		baseCtr = client.Container()
 	}
+	// Mark the generic build container as in-container, consistent with
+	// package builds, in-place tests, and fan-out test containers. An empty
+	// Dagger container is still a container; the hasImage guard below
+	// separately covers imageless Run. --local host runs never see this
+	// (different code path, LocalBuilder).
+	baseCtr = baseCtr.WithEnvVariable("SHIPYARD_IN_CONTAINER", "1")
 
 	db := &DaggerBuilder{
 		ctx:       ctx,

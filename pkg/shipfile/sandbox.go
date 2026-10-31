@@ -147,6 +147,25 @@ func (s *Sandbox) SetEnv(vars map[string]string) {
 	}
 }
 
+// UnsetEnv removes keys from the Python interpreter's os.environ dict.
+// It is the counterpart of SetEnv for duration-scoped seeding: callers
+// snapshot the previous value (via GetEnv), SetEnv the scoped value, then
+// defer UnsetEnv (or restore) so later phases on the same interpreter do
+// not observe a leaked marker.
+func (s *Sandbox) UnsetEnv(keys ...string) {
+	osMod, err := s.ctx.GetModule("os")
+	if err != nil {
+		return
+	}
+	envDict, ok := osMod.Globals["environ"].(py.StringDict)
+	if !ok {
+		return
+	}
+	for _, k := range keys {
+		delete(envDict, k)
+	}
+}
+
 // GetEnv returns a snapshot of the Python interpreter's os.environ dict.
 func (s *Sandbox) GetEnv() map[string]string {
 	osMod, err := s.ctx.GetModule("os")

@@ -1085,6 +1085,27 @@ func (s *Shipfile) Setup(ctx RunContext) error {
 	return nil
 }
 
+// seedInContainerMarker seeds SHIPYARD_IN_CONTAINER=1 into the gpython
+// sandbox environ for the duration of a container-driven setup()/build()
+// call and returns a restore func that removes (or restores) it. The
+// sandbox otherwise hides both host and container env (only SHIPYARD_DEPTH
+// is injected), so without this os.getenv('SHIPYARD_IN_CONTAINER') is
+// always None in-container even though the build container itself carries
+// the marker via WithEnvVariable. Must only be called for container-driven
+// builders (shipmod.IsContainerDriven); --local runs must never see it.
+func (s *Shipfile) seedInContainerMarker() func() {
+	sb := s.interp.Sandbox()
+	prev, hadPrev := sb.GetEnv()[shipmod.InContainerEnv]
+	sb.SetEnv(map[string]string{shipmod.InContainerEnv: "1"})
+	return func() {
+		if hadPrev {
+			sb.SetEnv(map[string]string{shipmod.InContainerEnv: prev})
+		} else {
+			sb.UnsetEnv(shipmod.InContainerEnv)
+		}
+	}
+}
+
 // RunSetupWithBuilder sets b as the active ContainerBuilder and drives only the
 // shipfile's setup() method. It is the setup-phase counterpart of
 // RunBuildWithBuilder: phased builds call setup, build, and save separately
@@ -1096,6 +1117,9 @@ func (s *Shipfile) RunSetupWithBuilder(b shipmod.ContainerBuilder, ctx RunContex
 		return err
 	}
 	defer cleanup()
+	if shipmod.IsContainerDriven(b) {
+		defer s.seedInContainerMarker()()
+	}
 
 	shipmod.SetActiveBuilder(b)
 	defer shipmod.ClearActiveBuilder()
@@ -1117,6 +1141,9 @@ func (s *Shipfile) RunBuildWithBuilder(b shipmod.ContainerBuilder, ctx RunContex
 		return err
 	}
 	defer cleanup()
+	if shipmod.IsContainerDriven(b) {
+		defer s.seedInContainerMarker()()
+	}
 
 	shipmod.SetActiveBuilder(b)
 	defer shipmod.ClearActiveBuilder()

@@ -15,9 +15,15 @@ import (
 
 // RunDepthEnv is the environment variable automatically set and incremented
 // on each shipyard.Run() subprocess invocation.
+// InContainerEnv marks container-targeted execution: the generic and package
+// builders set it on the build container AND seed it into the gpython sandbox
+// environ for container-driven setup()/build() runs so shipfile.py branching
+// on os.getenv("SHIPYARD_IN_CONTAINER") works host-side. --local runs never
+// see it.
 const (
-	RunDepthEnv = "SHIPYARD_DEPTH"
-	MaxRunDepth = 10
+	RunDepthEnv    = "SHIPYARD_DEPTH"
+	InContainerEnv = "SHIPYARD_IN_CONTAINER"
+	MaxRunDepth    = 10
 )
 
 func envWithIncrementedDepth() ([]string, error) {
@@ -35,7 +41,7 @@ func envWithIncrementedDepth() ([]string, error) {
 	out := make([]string, 0, len(base)+1)
 	prefix := RunDepthEnv + "="
 	for _, kv := range base {
-		if strings.HasPrefix(kv, prefix) || strings.HasPrefix(kv, "SHIPYARD_IN_CONTAINER=") {
+		if strings.HasPrefix(kv, prefix) || strings.HasPrefix(kv, InContainerEnv+"=") {
 			continue
 		}
 		out = append(out, kv)

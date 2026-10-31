@@ -30,6 +30,23 @@ type ContainerBuilder interface {
 	Save(src string, dst ...string) error
 }
 
+// IsContainerDriven reports whether build() calls routed through b target a
+// container while running host-side (e.g. *builder.DaggerBuilder via
+// DaggerBuilder). Builders opt in by implementing
+// `IsContainerBuild() bool` returning true; builders that execute on the
+// host (e.g. *builder.LocalBuilder for --local) must NOT implement it, so
+// host/local runs never observe the in-container marker. Defined here so
+// pkg/shipfile has no dependency on dagger or pkg/builder.
+func IsContainerDriven(b ContainerBuilder) bool {
+	if b == nil {
+		return false
+	}
+	if cd, ok := b.(interface{ IsContainerBuild() bool }); ok {
+		return cd.IsContainerBuild()
+	}
+	return false
+}
+
 var (
 	activeBuilderMu sync.RWMutex
 	activeBuilder   ContainerBuilder
