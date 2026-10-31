@@ -72,7 +72,9 @@ asciinema play demo/showcase.cast
 
 Watch it (24s build + two-system fan-out):
 
-https://github.com/nullmonk/shipyard/blob/develop/demo/showcase.mp4
+<video src="https://raw.githubusercontent.com/nullmonk/shipyard/develop/demo/showcase.mp4" controls width="100%"></video>
+
+Or play the terminal recording: `asciinema play demo/showcase.cast` (re-record with `./demo/showcase.sh`).
 
 Re-render from the cast (`demo/render_cast.py` needs `pyte` + `pillow`):
 

@@ -1,4 +1,4 @@
-from shipyard import Builder, Tester, Run, Workdir, test, SaveIfExists
+from shipyard import Builder, Tester, Run, Workdir, test, Save
 
 class Shipfile(Builder, Tester):
     Name = "showcase"
@@ -12,7 +12,10 @@ class Shipfile(Builder, Tester):
         Run("mkdir -p dist && echo 'hello from shipyard' > dist/hello.txt && cat dist/hello.txt")
 
     def save(self):
-        SaveIfExists("dist/hello.txt", "hello.txt")
+        # Strict Save: fail loudly if the bundle is missing. (Multi-distro
+        # shipfiles like openssh use SaveIfExists because only one family's
+        # globs match per build; here the single bundle must always exist.)
+        Save("dist/hello.txt", "hello.txt")
 
     @test("bundle-runs", "the built artifact exists and runs everywhere")
     def test_bundle(self):
