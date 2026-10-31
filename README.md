@@ -54,6 +54,17 @@ Watch a build with multi-system tests (`demo/showcase.cast`, playable with
 asciinema play demo/showcase.cast
 ```
 
+Watch it (24s build + two-system fan-out):
+
+https://github.com/nullmonk/shipyard/blob/develop/demo/showcase.mp4
+
+Re-render from the cast (`demo/render_cast.py` needs `pyte` + `pillow`):
+
+```
+python3 demo/render_cast.py demo/showcase.cast demo/frames
+ffmpeg -f concat -safe 0 -i demo/frames/concat.txt -c:v libx264 -pix_fmt yuv420p -movflags +faststart demo/showcase.mp4
+```
+
 ## Install
 
 Requires Go 1.26+ and Docker (Dagger engine):
