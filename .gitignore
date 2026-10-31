@@ -36,4 +36,4 @@ wheels/
 
 # Built binaries
 bin/
-/shipyard
+/shipyard!demo/**/shipfile.py

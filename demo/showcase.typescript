@@ -1,0 +1,72 @@
+Script started on 2026-10-31 03:10:26+00:00 [COMMAND="./showcase.sh" <not executed on terminal>]
+### 1. Validate the shipfile
+Shipfile /workspace/projects/shipyard/demo/showcase/shipfile.py is valid.
+
+### 2. Inspect it
+path: shipfile.py
+name: showcase
+type:
+  - builder
+  - tester
+version_tags: '*'
+
+### 3. Build it (watch the phase markers)
+[*] Source: showcase (copy: /workspace/projects/shipyard/demo/showcase)
+[*] Image: golang:1.22-alpine... pulled (3.7s)
+[drydock:phase:setup]
+    $ go version... done (0.0s)
+go version go1.22.12 linux/amd64
+[drydock:phase:build]
+[*] Building showcase
+    $ mkdir -p dist && echo 'hello from shipyard' > dist/hello.txt && cat dis…... done (0.0s)
+hello from shipyard
+[drydock:phase:test:build]
+[*] Running tests in container...
+[*] Running tests...
+$ cat /showcase/dist/hello.txt | grep -q 'hello from shipyard' && echo BUNDLE-OK
+BUNDLE-OK
+[+] PASS  bundle-runs
+[+] All 1 test(s) passed
+[drydock:phase:publish]
+[*] Saving artifacts...
+[drydock:done]
+[+] Build completed: 1 artifacts in dist/showcase
+
+### 4. Build once, test on two systems
+[*] Source: showcase (copy: /workspace/projects/shipyard/demo/showcase)
+[*] Image: golang:1.22-alpine... pulled (6.7s)
+[drydock:phase:setup]
+    $ go version... done (0.0s)
+go version go1.22.12 linux/amd64
+[drydock:phase:build]
+[*] Building showcase
+    $ mkdir -p dist && echo 'hello from shipyard' > dist/hello.txt && cat dis…... done (0.0s)
+hello from shipyard
+[drydock:phase:test:debian:bookworm]
+[*] Preparing test system debian:bookworm... done (3.4s)
+[*] Running tests in container...
+[*] Running tests...
+$ cat /showcase/dist/hello.txt | grep -q 'hello from shipyard' && echo BUNDLE-OK
+BUNDLE-OK
+[+] PASS  bundle-runs
+[+] All 1 test(s) passed
+[drydock:phase:test:archlinux:latest]
+[*] Preparing test system archlinux:latest... done (6.6s)
+[*] Running tests in container...
+[*] Running tests...
+$ cat /showcase/dist/hello.txt | grep -q 'hello from shipyard' && echo BUNDLE-OK
+BUNDLE-OK
+[+] PASS  bundle-runs
+[+] All 1 test(s) passed
+[drydock:phase:publish]
+[*] Saving artifacts...
+[drydock:done]
+[+] Build completed: 1 artifacts in dist/showcase
+
+### done: one bundle, tested on two distros
+total 12
+drwxr-xr-x 3 nullmonk nullmonk 4096 Oct 31 03:09 .
+drwxr-xr-x 3 nullmonk nullmonk 4096 Oct 31 03:09 ..
+drwxr-xr-x 2 nullmonk nullmonk 4096 Oct 31 03:09 showcase
+
+Script done on 2026-10-31 03:10:47+00:00 [COMMAND_EXIT_CODE="0"]

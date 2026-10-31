@@ -1,30 +1,54 @@
-<img src="logo.png" alt="Shipyard" width="400"/>  
+<img src="logo.png" alt="Shipyard" width="400"/>
 
-_quilt on steriods_  
+_Containerized builds and patching, driven by declarative Shipfiles._
 
+Shipyard builds generic software and native OS packages inside Dagger
+containers. You describe _what_ to build in a `shipfile.py`; Shipyard
+handles fetching sources, applying patches, building, testing, and
+exporting artifacts.
 
-Shipyard is a tool to help build and test patches against multiple versions of a source tree. It is
-designed to aid management of multiple patches that apply to multiple versions of software.
+## Shipfiles
 
-## Getting Started
+| Base class | Does what |
+|---|---|
+| `Patcher` | Fetches distro source packages (`apt-get source`, …), applies `@CodePatch` transforms, rebuilds `.deb` / `.rpm` |
+| `Builder` | Clones a repo or archive, runs `setup()` / `build()` in a container, exports `save()` artifacts |
+| `Tester` | Mixin (`class Shipfile(Patcher, Tester)`) adding `@test` functions that run after every build |
 
-If you just want to make patch files, you can install the package normally
+## Quick start
 
+```bash
+# check a shipfile is valid
+shipyard validate -f shipfile.py
+
+# show versions, metadata
+shipyard versions
+shipyard info
+
+# generic build in a container (BaseImage comes from the shipfile)
+shipyard build
+
+# build a distro package (Debian family shown)
+shipyard build --package debian:bookworm openssh
+
+# run tests on extra systems after building (each gets its own section)
+shipyard build --test-system ubuntu:24.04 --test-system fedora:38
+
+# work with upstream sources without containers
+shipyard pull openssh
+shipyard checkout V_9_9_P2
+shipyard patch /path/to/tree
+shipyard export >> patchfile.diff
 ```
-pip install "git+https://github.com/nullmonk/shipyard"
+
+See [`docs/`](docs/) for the full reference (`Shipfile.md`, `CodePatch.md`,
+`Building.md`, `LocalWorkflow.md`) and [`examples/`](examples/) for
+runnable Shipfiles.
+
+## Install
+
+Requires Go 1.26+ and Docker (Dagger engine):
+
+```bash
+make build   # produces bin/shipyard
 ```
-
-If you would like to build packages using [Dagger](https://dagger.io/) and docker, install the full tool
-
-```
-pip install "shipyard[all] @ git+https://github.com/nullmonk/shipyard"
-```
-
-## Documentation
-Check out the [full documentation](https://nullmonk.github.io/Shipyard/) to get started using Shipyard
-
-![](https://nullmonk.github.io/Shipyard/assets/svg/patch_demo.svg)
-
-## Examples
-Not many examples of repositories managed with Shipyard are open source, but [free-da](https://github.com/nullmonk/free-da) is one that makes exclusive use of
-CodePatches to maintain source code
