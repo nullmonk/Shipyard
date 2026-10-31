@@ -7,6 +7,11 @@ class Shipfile(Builder, Tester):
     Name = "shipyard"
     Url = "https://github.com/nullmonk/shipyard"
 
+    # Pinned default build container (matches the in-container From() below).
+    # Lets drydock standalone builds and `shipyard build --image` default
+    # sensibly instead of starting from an empty container.
+    BaseImage = "golang:1.26-alpine"
+
     def build(self):
         if os.getenv("SHIPYARD_IN_CONTAINER") == "1":
             # Container build (Dagger): fixed workdir, make(1) installed
