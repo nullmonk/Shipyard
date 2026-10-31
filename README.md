@@ -9,11 +9,27 @@ exporting artifacts.
 
 ## Shipfiles
 
-| Base class | Does what |
-|---|---|
-| `Patcher` | Fetches distro source packages (`apt-get source`, …), applies `@CodePatch` transforms, rebuilds `.deb` / `.rpm` |
-| `Builder` | Clones a repo or archive, runs `setup()` / `build()` in a container, exports `save()` artifacts |
-| `Tester` | Mixin (`class Shipfile(Patcher, Tester)`) adding `@test` functions that run after every build |
+A build is a Python class. This one compiles a Go binary and tests it:
+
+```python
+from shipyard import Builder, Tester, Run, test, SaveIfExists
+
+class Shipfile(Builder, Tester):
+    Name = "hello"
+    BaseImage = "golang:1.22-alpine"  # container the build runs in
+
+    def build(self):
+        Run("go build -o hello main.go")
+
+    def save(self):
+        SaveIfExists("hello", "hello")  # declare the artifact to export
+
+    @test("runs", "the binary executes")
+    def test_runs(self):
+        Run("./hello | grep -q hello")
+```
+
+`Patcher` subclasses fetch distro sources and apply `@CodePatch` transforms instead of cloning a repo — same `save()` / `@test` shape. See [`examples/`](examples/) for runnable Shipfiles.
 
 ## Quick start
 
